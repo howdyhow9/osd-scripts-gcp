@@ -23,14 +23,15 @@ def create_spark_session():
         .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
         .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
         .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
-        .config("spark.hadoop.fs.gs.project.id", "your-gcp-project-id") \
-        .config("spark.hadoop.fs.gs.system.bucket", "your-bucket-name") \
+        .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
+        .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
         .master("local[2]") \
         .enableHiveSupport()
 
 def IngestDeltaCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
         # Read the CSV file from GCS with error handling
+        spark = create_spark_session()
         menu_csv = spark.read.format("org.apache.spark.sql.execution.datasources.csv.CSVFileFormat") \
             .option("header", "true") \
             .option("inferSchema", "true") \
