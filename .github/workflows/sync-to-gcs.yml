@@ -14,13 +14,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v2
 
-      # Set up Google Cloud SDK and authenticate
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
+      # Authenticate with Google Cloud
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      # Set up Google Cloud SDK
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: your-gcp-project-id  # Replace with your GCP Project ID
-          service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
-          export_default_credentials: true
 
       # Sync the files to the GCS bucket
       - name: Sync Files to GCS
