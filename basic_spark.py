@@ -22,7 +22,7 @@ spark.sql("show databases").show()
 # Function to ingest CSV data into Delta Lake
 def IngestDeltaCSVHeader(iDBSchema, iTable, iFilePath):
     # Read the CSV file from GCS
-    menu_csv = spark.read.option("header", True).csv(iFilePath)
+    menu_csv = spark.read.format("csv").option("header", "true").load(iFilePath)
     menu_csv.show()
 
     # Create schema if not exists
