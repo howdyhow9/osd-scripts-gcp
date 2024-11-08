@@ -68,9 +68,9 @@ def main():
 
         # Define tables to ingest
         tables_to_ingest = [
-            ("restaurant", "menu", "gs://osd-data/source-data/menu_items.csv"),
-            ("restaurant", "orders", "gs://osd-data/source-data/order_details.csv"),
-            ("restaurant", "db_dictionary", "gs://osd-data/source-data/restaurant_db_data_dictionary.csv")
+            ("restaurant", "menu", "gs://osd-data/source/menu_items.csv"),
+            ("restaurant", "orders", "gs://osd-data/source/order_details.csv"),
+            ("restaurant", "db_dictionary", "gs://osd-data/source/restaurant_db_data_dictionary.csv")
         ]
 
         # Ingest all tables
