@@ -19,7 +19,7 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       # Set up Google Cloud SDK
       - name: Set up Cloud SDK
@@ -27,12 +27,12 @@ jobs:
         with:
           project_id: your-gcp-project-id  # Replace with your GCP Project ID
 
-      # Sync the files to the GCS bucket
+      # Sync the files to the GCS bucket, excluding specific files
       - name: Sync Files to GCS
         run: |
           # Install google-cloud-cli
           sudo apt-get update
           sudo apt-get install -y google-cloud-cli
 
-          # Sync repository files to the GCS bucket
-          gsutil -m rsync -r . gs://osd-scripts  # Replace with your GCS bucket name
+          # Sync repository files to the GCS bucket, excluding license, readme, and JSON files
+          gsutil -m rsync -r -x "(?i)^(LICENSE|README.*|.*\.json)$" . gs://osd-scripts  # Replace with your GCS bucket name
