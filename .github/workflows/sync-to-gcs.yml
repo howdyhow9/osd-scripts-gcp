@@ -25,8 +25,9 @@ jobs:
       # Sync the files to the GCS bucket
       - name: Sync Files to GCS
         run: |
-          # Install gsutil
-          sudo apt-get install -y google-cloud-sdk
+          # Install google-cloud-cli
+          sudo apt-get update
+          sudo apt-get install -y google-cloud-cli
 
           # Sync repository files to the GCS bucket
           gsutil -m rsync -r . gs://osd-scripts  # Replace with your GCS bucket name
