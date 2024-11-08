@@ -7,8 +7,8 @@ def create_spark_session():
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .config("spark.sql.warehouse.dir", "gs://osd-data/") \
         .config("hive.metastore.warehouse.dir", "gs://osd-data/") \
-         .config("javax.jdo.option.ConnectionURL", "jdbc:postgresql://postgres:5432/hive_metastore") \
-         .config("spark.sql.catalogImplementation", "hive") \
+        .config("javax.jdo.option.ConnectionURL", "jdbc:postgresql://postgres:5432/hive_metastore") \
+        .config("spark.sql.catalogImplementation", "hive") \
         .config("javax.jdo.option.ConnectionDriverName", "org.postgresql.Driver") \
         .config("javax.jdo.option.ConnectionUserName", "hive") \
         .config("javax.jdo.option.ConnectionPassword", "GUYgsjsj@123") \
@@ -19,7 +19,7 @@ def create_spark_session():
         .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
         .config("spark.hadoop.fs.gs.project.id", "your-gcp-project-id") \
         .config("spark.hadoop.fs.gs.system.bucket", "your-bucket-name") \
-         .master("local[2]") \
+        .master("local[2]") \
         .enableHiveSupport()
 
 return configure_spark_with_delta_pip(builder).getOrCreate()
