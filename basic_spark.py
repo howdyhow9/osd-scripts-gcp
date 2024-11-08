@@ -6,41 +6,84 @@ from delta import *
 import os
 import sys
 
-# Set up GCS access for Spark
-spark = SparkSession.builder \
-    .appName("DeltaLakeGCSExample") \
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
-    .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
-    .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
-    .config("spark.sql.warehouse.dir", "gs://osd-data/") \
-    .getOrCreate()
+def create_spark_session():
+    return SparkSession.builder \
+        .appName("DeltaLakeGCSExample") \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
+        .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
+        .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
+        .config("spark.sql.warehouse.dir", "gs://osd-data/") \
+        .config("spark.sql.files.maxPartitionBytes", "128MB") \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .getOrCreate()
 
-spark.sql("show databases").show()
+def IngestDeltaCSVHeader(spark, iDBSchema, iTable, iFilePath):
+    try:
+        # Read the CSV file from GCS with error handling
+        menu_csv = spark.read.format("org.apache.spark.sql.execution.datasources.csv.CSVFileFormat") \
+            .option("header", "true") \
+            .option("inferSchema", "true") \
+            .option("mode", "PERMISSIVE") \
+            .option("columnNameOfCorruptRecord", "_corrupt_record") \
+            .load(iFilePath)
 
-# Function to ingest CSV data into Delta Lake
-def IngestDeltaCSVHeader(iDBSchema, iTable, iFilePath):
-    # Read the CSV file from GCS
-    menu_csv = spark.read.format("csv").option("header", "true").load(iFilePath)
-    menu_csv.show()
+        print(f"Preview of data from {iFilePath}:")
+        menu_csv.show(5)
+        print(f"Schema of {iTable}:")
+        menu_csv.printSchema()
 
-    # Create schema if not exists
-    spark.sql(f"create schema if not exists {iDBSchema}")
+        # Create schema if not exists with error handling
+        try:
+            spark.sql(f"create schema if not exists {iDBSchema}")
+        except Exception as e:
+            print(f"Error creating schema {iDBSchema}: {str(e)}")
+            raise
 
-    # Write the data to Delta table
-    menu_csv.write.format("delta").mode("overwrite").saveAsTable(f"{iDBSchema}.{iTable}")
+        # Write to Delta table with optimizations
+        menu_csv.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .option("mergeSchema", "true") \
+            .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}/{iTable}") \
+            .saveAsTable(f"{iDBSchema}.{iTable}")
 
-# Ingest CSV data into Delta tables from GCS
-IngestDeltaCSVHeader("restaurant", "menu", "gs://osd-data/source-data/menu_items.csv")
-IngestDeltaCSVHeader("restaurant", "orders", "gs://osd-data/source-data/order_details.csv")
-IngestDeltaCSVHeader("restaurant", "db_dictionary", "gs://osd-data/source-data/restaurant_db_data_dictionary.csv")
+        print(f"Successfully ingested {iTable} into {iDBSchema}")
 
-# Example of querying and saving a new table (join operation)
-# new_table_df = spark.sql("""
-#     SELECT *
-#     FROM restaurant.orders o
-#     JOIN restaurant.menu m
-#     ON o.item_id = m.menu_item_id
-# """)
-# new_table_df.write.format("delta").mode("overwrite").saveAsTable("restaurant.newtable")
+        # Optimize the table after write
+        spark.sql(f"OPTIMIZE {iDBSchema}.{iTable}")
+
+    except Exception as e:
+        print(f"Error processing {iFilePath}: {str(e)}")
+        raise
+
+def main():
+    spark = create_spark_session()
+
+    try:
+        # Show available databases
+        print("Available databases:")
+        spark.sql("show databases").show()
+
+        # Define tables to ingest
+        tables_to_ingest = [
+            ("restaurant", "menu", "gs://osd-data/source-data/menu_items.csv"),
+            ("restaurant", "orders", "gs://osd-data/source-data/order_details.csv"),
+            ("restaurant", "db_dictionary", "gs://osd-data/source-data/restaurant_db_data_dictionary.csv")
+        ]
+
+        # Ingest all tables
+        for schema, table, path in tables_to_ingest:
+            IngestDeltaCSVHeader(spark, schema, table, path)
+
+        print("All tables ingested successfully")
+
+    except Exception as e:
+        print(f"Error in main execution: {str(e)}")
+        sys.exit(1)
+    finally:
+        spark.stop()
+
+if __name__ == "__main__":
+    main()
