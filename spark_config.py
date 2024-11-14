@@ -15,11 +15,14 @@ def create_spark_session():
         .config("datanucleus.schema.autoCreateTables", "true") \
         .config("hive.metastore.schema.verification", "false") \
         .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
-         .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
+        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
         .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
-        .config("spark.hadoop.fs.gs.project.id", "your-gcp-project-id") \
-        .config("spark.hadoop.fs.gs.system.bucket", "your-bucket-name") \
+        .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
+        .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
         .master("local[2]") \
         .enableHiveSupport()
 
-return configure_spark_with_delta_pip(builder).getOrCreate()
+    # Configure Delta with Spark
+    spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+    return spark
