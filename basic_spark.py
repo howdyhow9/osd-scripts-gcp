@@ -5,7 +5,9 @@ from pyspark.sql.types import *
 from delta import *
 import os
 import sys
+sys.path.insert(0, '/opt/spark-config')
 from spark_config import create_spark_session
+
 
 
 def IngestDeltaCSVHeader(spark, iDBSchema, iTable, iFilePath):
