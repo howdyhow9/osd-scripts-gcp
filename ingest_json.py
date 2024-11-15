@@ -22,11 +22,11 @@ from spark_config import create_spark_session
 def IngestJSONWithSampleSchema(spark, iDBSchema, iTable, iFilePath):
     try:
         # Step 1: Infer the schema from the first 100 rows
-        sample_df = spark.read.json(iFilePath).limit(100)
+        sample_df = spark.read.format("org.apache.spark.sql.execution.datasources.json.JsonFileFormat").load(iFilePath).limit(100)
         schema = sample_df.schema
 
         # Step 2: Use the inferred schema to load the full JSON file
-        json_df = spark.read.schema(schema).json(iFilePath)
+        json_df = spark.read.format("org.apache.spark.sql.execution.datasources.json.JsonFileFormat").schema(schema).load(iFilePath)
 
         print(f"Preview of data from {iFilePath}:")
         json_df.show(5)
