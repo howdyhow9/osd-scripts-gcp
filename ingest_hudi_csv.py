@@ -22,27 +22,22 @@ def create_spark_session_with_hudi():
         .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
         .config("spark.sql.warehouse.dir", "file:/opt/spark/work-dir/spark-warehouse") \
-        .config("spark.driver.memory", "4g") \
-        .config("spark.executor.memory", "4g") \
-        .config("hive.metastore.uris", "") \
-        .config("spark.sql.legacy.createHiveTableByDefault", "false") \
         .getOrCreate()
 
     return spark
 
 def IngestHudiCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
-        # Read the CSV file from GCS with error handling
+        # Read the CSV file
+        print(f"Reading CSV from: {iFilePath}")
         df = spark.read.format("csv") \
             .option("header", "true") \
             .option("inferSchema", "true") \
-            .option("mode", "PERMISSIVE") \
-            .option("columnNameOfCorruptRecord", "_corrupt_record") \
             .load(iFilePath)
 
-        print(f"Preview of data from {iFilePath}:")
+        print(f"Preview of data:")
         df.show(5)
-        print(f"Schema of {iTable}:")
+        print(f"Schema:")
         df.printSchema()
 
         # Get table location path
@@ -50,59 +45,32 @@ def IngestHudiCSVHeader(spark, iDBSchema, iTable, iFilePath):
 
         # Get primary key column (assuming first column if not 'id')
         pk_column = 'id' if 'id' in df.columns else df.columns[0]
-        print(f"Using {pk_column} as the primary key for table {iTable}")
+        print(f"Using {pk_column} as the primary key")
 
-        # Define Hudi specific configurations
+        # Write to Hudi table
+        print(f"Writing to Hudi table at: {table_path}")
+
         hudiOptions = {
             'hoodie.table.name': f"{iDBSchema}_{iTable}",
             'hoodie.datasource.write.recordkey.field': pk_column,
             'hoodie.datasource.write.precombine.field': pk_column,
             'hoodie.datasource.write.operation': 'bulk_insert',
-            'hoodie.bulkinsert.shuffle.parallelism': '2',
-            'hoodie.datasource.hive_sync.enable': 'true',
-            'hoodie.datasource.hive_sync.database': iDBSchema,
-            'hoodie.datasource.hive_sync.table': iTable,
-            'hoodie.datasource.hive_sync.use_jdbc': 'false',
-            'hoodie.datasource.hive_sync.mode': 'hms'
+            'hoodie.bulkinsert.shuffle.parallelism': '2'
         }
 
-        try:
-            # Create database if not exists
-            spark.sql(f"CREATE DATABASE IF NOT EXISTS {iDBSchema}")
-            print(f"Created or verified database {iDBSchema}")
-        except Exception as e:
-            print(f"Warning during database creation: {str(e)}")
+        # Write using DataFrameWriter
+        df.write \
+            .format("org.apache.hudi") \
+            .options(**hudiOptions) \
+            .mode("overwrite") \
+            .save(table_path)
 
-        try:
-            # Write to Hudi table
-            df.write \
-                .format("org.apache.hudi") \
-                .options(**hudiOptions) \
-                .mode("overwrite") \
-                .save(table_path)
+        print(f"Successfully written data to {table_path}")
 
-            print(f"Successfully written data to {table_path}")
-
-            # Register table in Spark SQL
-            create_table_sql = f"""
-            CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable}
-            USING hudi
-            LOCATION '{table_path}'
-            """
-            spark.sql(create_table_sql)
-            print(f"Successfully registered table {iDBSchema}.{iTable}")
-
-            # Verify table creation
-            spark.sql(f"SHOW TABLES IN {iDBSchema}").show()
-
-            # Read back some data to verify
-            verification_df = spark.read.format("hudi").load(table_path)
-            print("Verification of written data:")
-            verification_df.show(5)
-
-        except Exception as e:
-            print(f"Error during table write or registration: {str(e)}")
-            raise
+        # Verify the write by reading back
+        print("Verifying written data:")
+        read_df = spark.read.format("org.apache.hudi").load(table_path)
+        read_df.show(5)
 
     except Exception as e:
         print(f"Error processing {iFilePath}: {str(e)}")
@@ -113,14 +81,12 @@ def main():
 
     try:
         print("Spark Session created successfully")
-        print("Available databases before ingestion:")
-        spark.sql("SHOW DATABASES").show()
 
         # Define tables to ingest
         tables_to_ingest = [
-            ("restaurant", "menu", "gs://osd-data/source/menu_items.csv"),
-            ("restaurant", "orders", "gs://osd-data/source/order_details.csv"),
-            ("restaurant", "db_dictionary", "gs://osd-data/source/data_dictionary.csv")
+            ("restaurant_hudi", "menu", "gs://osd-data/source/menu_items.csv"),
+            ("restaurant_hudi", "orders", "gs://osd-data/source/order_details.csv"),
+            ("restaurant_hudi", "db_dictionary", "gs://osd-data/source/data_dictionary.csv")
         ]
 
         # Ingest all tables
@@ -128,10 +94,7 @@ def main():
             print(f"\nProcessing table: {schema}.{table}")
             IngestHudiCSVHeader(spark, schema, table, path)
 
-        print("\nAvailable databases after ingestion:")
-        spark.sql("SHOW DATABASES").show()
-
-        print("All tables ingested successfully")
+        print("\nAll tables ingested successfully")
 
     except Exception as e:
         print(f"Error in main execution: {str(e)}")
