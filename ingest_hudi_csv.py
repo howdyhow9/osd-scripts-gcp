@@ -15,8 +15,15 @@ blob.download_to_filename("/tmp/spark_config.py")
 # Add the directory to system path
 sys.path.insert(0, '/tmp')
 
-# Import your file as a module
-from spark_config import create_spark_session
+# Modify your spark_config.py to include these configurations in the create_spark_session function:
+def create_spark_session_with_hudi():
+    spark = SparkSession.builder \
+        .appName("Hudi Ingestion") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
+        .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
+        .getOrCreate()
+    return spark
 
 def IngestHudiCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
@@ -78,12 +85,7 @@ def IngestHudiCSVHeader(spark, iDBSchema, iTable, iFilePath):
 
 def main():
     # Create Spark session with Hudi support
-    spark = create_spark_session()
-
-    # Add Hudi specific configurations
-    spark.conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    spark.conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog")
-    spark.conf.set("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension")
+    spark = create_spark_session_with_hudi()
 
     try:
         # Show available databases
