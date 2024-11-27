@@ -9,8 +9,8 @@ import sys
 # Set up GCS client and download the file
 client = storage.Client()
 bucket = client.get_bucket("osd-scripts")
-blob = bucket.blob("spark_config.py")
-blob.download_to_filename("/tmp/spark_config.py")
+blob = bucket.blob("spark_config_delta.py")
+blob.download_to_filename("/tmp/spark_config_delta.py")
 
 # Add the directory to system path
 sys.path.insert(0, '/tmp')

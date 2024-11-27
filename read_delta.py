@@ -1,5 +1,5 @@
 
-from spark_config import create_spark_session
+from spark_config_delta import create_spark_session
 
 # Create Spark session using the imported function
 spark = create_spark_session()

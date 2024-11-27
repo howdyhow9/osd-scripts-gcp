@@ -1,10 +1,10 @@
 from pyspark.sql import SparkSession
-from delta import configure_spark_with_delta_pip
 
 def create_spark_session():
     builder = SparkSession.builder \
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.warehouse.dir", "gs://osd-data/") \
         .config("hive.metastore.warehouse.dir", "gs://osd-data/") \
         .config("javax.jdo.option.ConnectionURL", "jdbc:postgresql://postgres:5432/hive_metastore") \
@@ -19,10 +19,6 @@ def create_spark_session():
         .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
         .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
         .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
-        .master("local[2]") \
         .enableHiveSupport()
 
-    # Configure Delta with Spark
-    spark = configure_spark_with_delta_pip(builder).getOrCreate()
-
-    return spark
+    return builder.getOrCreate()
