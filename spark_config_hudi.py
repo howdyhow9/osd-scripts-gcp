@@ -2,9 +2,11 @@ from pyspark.sql import SparkSession
 
 def create_spark_session():
     builder = SparkSession.builder \
+        .config("spark.jars.packages", 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1') \
         .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.kryo.registrator", "org.apache.spark.HoodieSparkKryoRegistrar") \
         .config("spark.sql.warehouse.dir", "gs://osd-data/") \
         .config("hive.metastore.warehouse.dir", "gs://osd-data/") \
         .config("javax.jdo.option.ConnectionURL", "jdbc:postgresql://postgres:5432/hive_metastore") \
