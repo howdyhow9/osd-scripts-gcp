@@ -72,11 +72,12 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
 
         spark.sql(create_table_sql)
 
-        # Write data to Iceberg table
+        # Write data to Iceberg table using DataFrame write API
         print(f"Writing to Iceberg table at: {table_path}")
-        df.writeTo(f"{iDBSchema}.{iTable}") \
-            .overwrite() \
-            .execute()
+        df.write \
+            .format("iceberg") \
+            .mode("overwrite") \
+            .saveAsTable(f"{iDBSchema}.{iTable}")
 
         print(f"Successfully written data to {table_path}")
 
