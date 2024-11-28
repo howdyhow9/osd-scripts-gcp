@@ -22,6 +22,8 @@ def create_spark_session():
         .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
         .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
         .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
+        .config("iceberg.engine.hive.lock-enabled", "false") \
         .enableHiveSupport()
 
     return builder.getOrCreate()
+
