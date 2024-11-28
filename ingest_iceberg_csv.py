@@ -9,7 +9,7 @@ import sys
 # Set up GCS client and download the file
 client = storage.Client()
 bucket = client.get_bucket("osd-scripts")
-blob = bucket.blob("spark_config_iceberg.py")  # Updated filename
+blob = bucket.blob("spark_config_iceberg.py")
 blob.download_to_filename("/tmp/spark_config_iceberg.py")
 
 # Add the directory to system path
@@ -49,14 +49,13 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         pk_column = 'id' if 'id' in df.columns else df.columns[0]
         print(f"Using {pk_column} as the primary key")
 
-        # Create Iceberg table with properties
+        # Create Iceberg table with simplified properties (no partitioning)
         create_table_sql = f"""
         CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable} (
             {', '.join([f"{col} {str(dtype).replace('Type','')}"
                         for col, dtype in df.dtypes])}
         )
         USING iceberg
-        PARTITIONED BY (years(ts))
         LOCATION '{table_path}'
         TBLPROPERTIES (
             'write.format.default' = 'parquet',
