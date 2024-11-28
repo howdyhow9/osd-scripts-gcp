@@ -20,6 +20,16 @@ from spark_config_iceberg import create_spark_session
 
 def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
+        # Set Iceberg properties to avoid locking issues
+        spark.conf.set("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
+        spark.conf.set("spark.sql.catalog.spark_catalog.type", "hive")
+        spark.conf.set("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+        spark.conf.set("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
+
+        # Disable lock creation
+        spark.conf.set("spark.sql.iceberg.create-table-lock-enabled", "false")
+        spark.conf.set("spark.sql.iceberg.lock-impl", "org.apache.iceberg.common.DynamicLockConfig")
+
         # Read the CSV file with error handling
         print(f"Reading CSV from: {iFilePath}")
         df = spark.read.format("csv") \
@@ -45,13 +55,12 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         # Get table location path
         table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
 
-        # Get primary key column (assuming first column if not 'id')
-        pk_column = 'id' if 'id' in df.columns else df.columns[0]
-        print(f"Using {pk_column} as the primary key")
+        # Drop existing table if it exists
+        spark.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
 
-        # Create Iceberg table with simplified properties (no partitioning)
+        # Create Iceberg table with basic properties
         create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable} (
+        CREATE TABLE {iDBSchema}.{iTable} (
             {', '.join([f"{col} {str(dtype).replace('Type','')}"
                         for col, dtype in df.dtypes])}
         )
@@ -60,9 +69,6 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         TBLPROPERTIES (
             'write.format.default' = 'parquet',
             'write.parquet.compression-codec' = 'snappy',
-            'write.metadata.compression-codec' = 'gzip',
-            'write.metadata.metrics.default' = 'full',
-            'write.distribution-mode' = 'hash',
             'write.object-storage.enabled' = 'true',
             'write.data.path' = '{table_path}/data',
             'write.metadata.path' = '{table_path}/metadata',
@@ -77,6 +83,9 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         df.write \
             .format("iceberg") \
             .mode("overwrite") \
+            .option("merge-schema", "true") \
+            .option("check-ordering", "false") \
+            .option("isolation-level", "snapshot") \
             .saveAsTable(f"{iDBSchema}.{iTable}")
 
         print(f"Successfully written data to {table_path}")
@@ -85,13 +94,6 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         print("Verifying written data:")
         read_df = spark.table(f"{iDBSchema}.{iTable}")
         read_df.show(5)
-
-        # Run maintenance operations
-        print(f"Running maintenance operations for {iDBSchema}.{iTable}")
-        # Expire old snapshots
-        spark.sql(f"CALL {iDBSchema}.system.expire_snapshots('{table_path}')")
-        # Remove old metadata files
-        spark.sql(f"CALL {iDBSchema}.system.remove_orphan_files('{table_path}')")
 
     except Exception as e:
         print(f"Error processing {iFilePath}: {str(e)}")
