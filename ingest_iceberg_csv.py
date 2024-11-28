@@ -20,16 +20,6 @@ from spark_config_iceberg import create_spark_session
 
 def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
-        # Set Iceberg properties to avoid locking issues
-        spark.conf.set("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-        spark.conf.set("spark.sql.catalog.spark_catalog.type", "hive")
-        spark.conf.set("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-        spark.conf.set("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
-
-        # Disable lock creation
-        spark.conf.set("spark.sql.iceberg.create-table-lock-enabled", "false")
-        spark.conf.set("spark.sql.iceberg.lock-impl", "org.apache.iceberg.common.DynamicLockConfig")
-
         # Read the CSV file with error handling
         print(f"Reading CSV from: {iFilePath}")
         df = spark.read.format("csv") \
@@ -58,7 +48,7 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
         # Drop existing table if it exists
         spark.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
 
-        # Create Iceberg table with basic properties
+        # Create Iceberg table with optimized properties
         create_table_sql = f"""
         CREATE TABLE {iDBSchema}.{iTable} (
             {', '.join([f"{col} {str(dtype).replace('Type','')}"
@@ -72,20 +62,19 @@ def IngestIcebergCSVHeader(spark, iDBSchema, iTable, iFilePath):
             'write.object-storage.enabled' = 'true',
             'write.data.path' = '{table_path}/data',
             'write.metadata.path' = '{table_path}/metadata',
-            'format-version' = '2'
+            'format-version' = '2',
+            'write.metadata.delete-after-commit.enabled' = 'true',
+            'write.metadata.previous-versions-max' = '5'
         )
         """
 
         spark.sql(create_table_sql)
 
-        # Write data to Iceberg table using DataFrame write API
+        # Write data using simple DataFrame API
         print(f"Writing to Iceberg table at: {table_path}")
         df.write \
             .format("iceberg") \
-            .mode("overwrite") \
-            .option("merge-schema", "true") \
-            .option("check-ordering", "false") \
-            .option("isolation-level", "snapshot") \
+            .mode("append") \
             .saveAsTable(f"{iDBSchema}.{iTable}")
 
         print(f"Successfully written data to {table_path}")
