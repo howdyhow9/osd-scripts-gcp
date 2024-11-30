@@ -85,10 +85,6 @@ def IngestHudiCSVHeader(spark, iDBSchema, iTable, iFilePath):
         read_df = spark.read.format("hudi").load(table_path)
         read_df.show(5)
 
-        # Run compaction
-        print(f"Running compaction for {table_path}")
-        spark.sql(f"CALL run_compaction('{table_path}')")
-
     except Exception as e:
         print(f"Error processing {iFilePath}: {str(e)}")
         raise
