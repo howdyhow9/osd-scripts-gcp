@@ -48,20 +48,18 @@ df_kafka = spark \
     .option("failOnDataLoss", "false") \
     .option("subscribe", "osds-topic") \
     .option("startingOffsets", "earliest") \
-    .option("kafka.security.protocol", "PLAINTEXT") \
-    .option("kafka.ssl.endpoint.identification.algorithm", "") \
-    .option("fetchOffset.numRetries", "3") \
-    .option("kafka.request.timeout.ms", "40000") \
-    .option("kafka.session.timeout.ms", "30000") \
     .load()
 
 # Write stream using foreachBatch
-df_kafka.writeStream \
+query = df_kafka.writeStream \
     .foreachBatch(kafka_to_delta) \
     .outputMode("append") \
     .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}/{iTable}") \
     .trigger(once=True) \
     .start()
+
+# Wait for the streaming to finish
+query.awaitTermination()
 
 # Clean up
 spark.stop()
