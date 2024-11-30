@@ -19,10 +19,13 @@ sys.path.insert(0, '/tmp')
 # Import your file as a module
 from spark_config_delta import create_spark_session
 
+
+
+
 def IngestDeltaCSVHeader(spark, iDBSchema, iTable, iFilePath):
     try:
         # Read the CSV file from GCS with error handling
-        menu_csv = spark.read.format("csv") \
+        menu_csv = spark.read.format("org.apache.spark.sql.execution.datasources.csv.CSVFileFormat") \
             .option("header", "true") \
             .option("inferSchema", "true") \
             .option("mode", "PERMISSIVE") \
