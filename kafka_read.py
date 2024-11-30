@@ -34,13 +34,13 @@ def kafka_to_delta(df, batch_id):
 
 # Initialize Spark session
 spark = create_spark_session()
-iDBSchema = "kafka_delta"
+iDBSchema = "restaurant_delta"
 iTable = "kafka"
 
 # Create schema if not exists
 spark.sql(f"CREATE DATABASE IF NOT EXISTS {iDBSchema}")
 
-# Read from Kafka stream
+# Read from Kafka stream with security configurations
 df_kafka = spark \
     .readStream \
     .format("kafka") \
@@ -48,6 +48,11 @@ df_kafka = spark \
     .option("failOnDataLoss", "false") \
     .option("subscribe", "osds-topic") \
     .option("startingOffsets", "earliest") \
+    .option("kafka.security.protocol", "PLAINTEXT") \
+    .option("kafka.ssl.endpoint.identification.algorithm", "") \
+    .option("fetchOffset.numRetries", "3") \
+    .option("kafka.request.timeout.ms", "40000") \
+    .option("kafka.session.timeout.ms", "30000") \
     .load()
 
 # Write stream using foreachBatch
