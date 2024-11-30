@@ -42,11 +42,8 @@ query = df_kafka \
     .format("delta") \
     .outputMode("append") \
     .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}/{iTable}") \
+    .trigger(once=True)  \
     .table(f"{iDBSchema}.{iTable}")
 
-# Wait for the processing to complete
-query.processAllAvailable()  # This will process all available data and then stop
-query.stop()  # Stop the query after processing is complete
-
-# Clean up
+# The query will automatically stop after processing available data
 spark.stop()
