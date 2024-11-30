@@ -21,14 +21,20 @@ from spark_config_delta import create_spark_session
 
 def kafka_to_delta(df, batch_id):
     print("Processing batch:", batch_id)
+    iDBSchema = "restaurant_delta"
+    iTable = "kafka"
+    table_loc = "gs://osd-data/"+iDBSchema+".db/"+iDBSchema+"/"
 
     # Write batch to Delta Lake
     df.write \
         .format("delta") \
         .mode("append") \
-        .saveAsTable(f"{iDBSchema}.{iTable}")
+        .save(table_loc)
+    spark.sql("create schema if not exists "+iDBSchema+"")
+    spark.sql("create table if not exists "+iDBSchema+"."+iTable+" using delta location '"+table_loc+"'")
 
-    # Display preview of the batch
+
+# Display preview of the batch
     print("Preview of batch data:")
     df.show(5)
 
