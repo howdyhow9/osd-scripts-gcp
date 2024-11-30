@@ -19,8 +19,22 @@ sys.path.insert(0, '/tmp')
 # Import your file as a module
 from spark_config_delta import create_spark_session
 
+def kafka_to_delta(df, batch_id):
+    print("Processing batch:", batch_id)
+
+    # Write batch to Delta Lake
+    df.write \
+        .format("delta") \
+        .mode("append") \
+        .saveAsTable(f"{iDBSchema}.{iTable}")
+
+    # Display preview of the batch
+    print("Preview of batch data:")
+    df.show(5)
+
+# Initialize Spark session
 spark = create_spark_session()
-iDBSchema = "restaurant_delta"
+iDBSchema = "kafka_delta"
 iTable = "kafka"
 
 # Create schema if not exists
@@ -36,14 +50,13 @@ df_kafka = spark \
     .option("startingOffsets", "earliest") \
     .load()
 
-# Write to Delta Lake using writeStream
-query = df_kafka \
-    .writeStream \
-    .format("delta") \
+# Write stream using foreachBatch
+df_kafka.writeStream \
+    .foreachBatch(kafka_to_delta) \
     .outputMode("append") \
     .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}/{iTable}") \
-    .trigger(once=True)  \
-    .table(f"{iDBSchema}.{iTable}")
+    .trigger(once=True) \
+    .start()
 
-# The query will automatically stop after processing available data
+# Clean up
 spark.stop()
