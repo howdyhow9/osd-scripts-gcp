@@ -21,7 +21,7 @@ from spark_config_delta import create_spark_session
 
 def kafka_to_delta(df, batch_id):
     print("Processing batch:", batch_id)
-    iDBSchema = "restaurant_delta"
+    iDBSchema = "kafka_delta"
     iTable = "kafka"
     table_loc = f"gs://osd-data/{iDBSchema}.db/{iTable}"  # Fixed table location path
 
@@ -55,7 +55,7 @@ def kafka_to_delta(df, batch_id):
 
 # Initialize Spark session
 spark = create_spark_session()
-iDBSchema = "restaurant_delta"
+iDBSchema = "kafka_delta"
 iTable = "kafka"
 
 # Read from Kafka stream with security configurations
