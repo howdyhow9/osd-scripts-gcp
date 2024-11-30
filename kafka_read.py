@@ -34,7 +34,6 @@ df_kafka = spark \
     .option("failOnDataLoss", "false") \
     .option("subscribe", "osds-topic") \
     .option("startingOffsets", "earliest") \
-    .option("endingOffsets", "latest") \
     .load()
 
 # Write to Delta Lake using writeStream
