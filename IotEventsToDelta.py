@@ -46,16 +46,14 @@ def parse_json_value(df):
 
     return parsed_df
 
-def create_kafka_to_delta_processor(spark_session):
-    """Create a processor function with access to spark session"""
+def create_kafka_to_delta_processor(spark_session, db_name, table_name):
+    """Create a processor function with access to spark session and table info"""
 
     def kafka_to_delta(df, batch_id):
         """Process each batch of Kafka data and write to Delta Lake"""
 
         print(f"Processing batch: {batch_id}")
-        iDBSchema = "kafka_delta"
-        iTable = "kafka"
-        table_loc = f"gs://osd-data/{iDBSchema}.db/{iTable}"
+        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
 
         try:
             # Cast Kafka message format
@@ -81,14 +79,14 @@ def create_kafka_to_delta_processor(spark_session):
                 .save(table_loc)
 
             # Create or update table metadata
-            spark_session.sql(f"CREATE DATABASE IF NOT EXISTS {iDBSchema}")
+            spark_session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}")
             spark_session.sql(f"""
-                CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable}
+                CREATE TABLE IF NOT EXISTS {db_name}.{table_name}
                 USING delta
                 LOCATION '{table_loc}'
             """)
 
-            print(f"Successfully wrote batch {batch_id} to {iDBSchema}.{iTable}")
+            print(f"Successfully wrote batch {batch_id} to {db_name}.{table_name}")
 
             # Print batch statistics
             print("Batch statistics:")
@@ -108,6 +106,34 @@ def create_kafka_to_delta_processor(spark_session):
 
     return kafka_to_delta
 
+def verify_table_results(spark, db_name, table_name):
+    """Verify table results with proper error handling"""
+    try:
+        table_exists = (spark.sql(f"SHOW TABLES IN {db_name}")
+                        .filter(F.col("tableName") == table_name)
+                        .count() > 0)
+
+        if not table_exists:
+            print(f"No data was processed. Table {db_name}.{table_name} does not exist.")
+            return
+
+        result = spark.sql(f"""
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT uuid) as unique_devices,
+                ROUND(AVG(consumption), 2) as avg_consumption,
+                MIN(ts) as earliest_event,
+                MAX(ts) as latest_event,
+                MIN(processing_time) as first_processed,
+                MAX(processing_time) as last_processed
+            FROM {db_name}.{table_name}
+        """)
+        print("Final table statistics:")
+        result.show(truncate=False)
+
+    except Exception as e:
+        print(f"Error verifying results: {str(e)}")
+
 def main():
     try:
         # Initialize Spark session
@@ -118,12 +144,12 @@ def main():
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
         # Define schema and table names
-        iDBSchema = "kafka_delta"
-        iTable = "iot_events"
+        db_name = "kafka_delta"
+        table_name = "iot_events"
 
         # Clean up existing table
-        table_loc = f"gs://osd-data/{iDBSchema}.db/{iTable}"
-        spark.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
+        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
+        spark.sql(f"DROP TABLE IF EXISTS {db_name}.{table_name}")
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
@@ -137,14 +163,14 @@ def main():
             .load()
 
         print("Starting stream processing...")
-        # Create processor function with spark session
-        processor = create_kafka_to_delta_processor(spark)
+        # Create processor function with spark session and table info
+        processor = create_kafka_to_delta_processor(spark, db_name, table_name)
 
         # Write stream using foreachBatch
         query = df_kafka.writeStream \
             .foreachBatch(processor) \
             .outputMode("append") \
-            .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}/{iTable}") \
+            .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
             .trigger(once=True) \
             .start()
 
@@ -152,20 +178,7 @@ def main():
         query.awaitTermination()
 
         print("Stream processing completed. Verifying results...")
-        # Verify the table after processing
-        result = spark.sql(f"""
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT uuid) as unique_devices,
-                ROUND(AVG(consumption), 2) as avg_consumption,
-                MIN(ts) as earliest_event,
-                MAX(ts) as latest_event,
-                MIN(processing_time) as first_processed,
-                MAX(processing_time) as last_processed
-            FROM {iDBSchema}.{iTable}
-        """)
-        print("Final table statistics:")
-        result.show(truncate=False)
+        verify_table_results(spark, db_name, table_name)
 
     except Exception as e:
         print(f"Error in main process: {str(e)}")
