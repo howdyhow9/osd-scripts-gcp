@@ -43,50 +43,6 @@ def parse_json_value(df):
         "parsed_value.*"
     )
 
-def setup_hudi_table(spark, iDBSchema, iTable):
-    """Setup schema and table for Hudi"""
-    try:
-        # Create schema if not exists
-        spark.sql(f"create database if not exists {iDBSchema}")
-        print(f"Schema {iDBSchema} created or already exists")
-
-        # Get table location path
-        table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
-
-        # Register table in Hive metastore with schema
-        spark.sql(f"""
-            CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable} (
-                kafka_key STRING,
-                kafka_timestamp TIMESTAMP,
-                uuid STRING,
-                ts TIMESTAMP,
-                consumption DOUBLE,
-                month STRING,
-                day STRING,
-                hour STRING,
-                minute STRING,
-                date STRING,
-                key STRING,
-                processing_time TIMESTAMP,
-                batch_id LONG
-            )
-            USING hudi
-            LOCATION '{table_path}'
-            TBLPROPERTIES (
-                'hoodie.table.name' = '{iDBSchema}_{iTable}',
-                'hoodie.datasource.write.recordkey.field' = 'uuid',
-                'hoodie.datasource.write.partitionpath.field' = 'date',
-                'hoodie.datasource.write.precombine.field' = 'ts',
-                'hoodie.datasource.write.table.type' = 'COPY_ON_WRITE'
-            )
-        """)
-        print(f"Table {iDBSchema}.{iTable} registered with schema")
-
-        return table_path
-    except Exception as e:
-        print(f"Error setting up schema/table: {str(e)}")
-        raise
-
 def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
     """Create a processor function with access to spark session and table info"""
 
@@ -97,6 +53,14 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
         table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
 
         try:
+            # Create schema if not exists
+            try:
+                spark_session.sql(f"create database if not exists {iDBSchema}")
+                print(f"Schema {iDBSchema} created or already exists")
+            except Exception as e:
+                print(f"Error creating schema {iDBSchema}: {str(e)}")
+                raise
+
             # Cast Kafka message format
             kafka_df = df.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp")
 
@@ -135,7 +99,16 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
                 .mode("append") \
                 .save(table_path)
 
-            print(f"Successfully wrote batch {batch_id}")
+            print(f"Successfully wrote data to {table_path}")
+
+            # Register table in Hive metastore
+            if batch_id == 0:
+                spark_session.sql(f"""
+                    CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable}
+                    USING hudi
+                    LOCATION '{table_path}'
+                """)
+                print(f"Table {iDBSchema}.{iTable} registered")
 
             # Verify the write by reading back
             print("Verifying written data:")
@@ -166,17 +139,15 @@ def main():
         print("Creating Spark session...")
         spark = create_spark_session()
 
-        # Define schema and table names
-        iDBSchema = "kafka_hudi"
-        iTable = "iot_events"
+        print("Spark Session created successfully")
 
         # Show available databases
         print("Available databases:")
         spark.sql("show databases").show()
 
-        # Setup schema and table
-        print("Setting up schema and table...")
-        table_path = setup_hudi_table(spark, iDBSchema, iTable)
+        # Define schema and table names
+        iDBSchema = "kafka_hudi"
+        iTable = "iot_events"
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
@@ -206,11 +177,6 @@ def main():
 
         print("Stream processing completed")
 
-        # Verify the final table
-        print("Verifying final table data:")
-        read_df = spark.read.format("hudi").load(table_path)
-        read_df.show(5)
-
     except Exception as e:
         print(f"Error in main process: {str(e)}")
         import traceback
@@ -219,7 +185,6 @@ def main():
     finally:
         if 'spark' in locals():
             spark.stop()
-            print("Spark session stopped")
 
 if __name__ == "__main__":
     main()
