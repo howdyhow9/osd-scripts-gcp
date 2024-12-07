@@ -63,9 +63,11 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
 
             # Cast Kafka message format
             kafka_df = df.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp")
+            print("Number of records in Kafka batch:", df.count())
 
             # Parse JSON values
             parsed_df = parse_json_value(kafka_df)
+            print("Number of records after parsing:", parsed_df.count())
 
             # Add processing metadata
             final_df = parsed_df.withColumn("processing_time", F.current_timestamp()) \
@@ -93,11 +95,18 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
 
             # Write to Hudi table
             print(f"Writing to Hudi table at: {table_path}")
-            final_df.write \
-                .format("org.apache.hudi") \
-                .options(**hudiOptions) \
-                .mode("append") \
-                .save(table_path)
+            # Check if we have data to write
+            record_count = final_df.count()
+            print(f"Number of records to write: {record_count}")
+
+            if record_count > 0:
+                final_df.write \
+                    .format("org.apache.hudi") \
+                    .options(**hudiOptions) \
+                    .mode("overwrite" if batch_id == 0 else "append") \
+                    .save(table_path)
+            else:
+                print("No records to write in this batch")
 
             print(f"Successfully wrote data to {table_path}")
 
