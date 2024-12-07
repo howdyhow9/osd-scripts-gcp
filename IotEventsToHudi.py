@@ -53,13 +53,34 @@ def setup_hudi_table(spark, iDBSchema, iTable):
         # Get table location path
         table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
 
-        # Register table in Hive metastore
+        # Register table in Hive metastore with schema
         spark.sql(f"""
-            CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable}
+            CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable} (
+                kafka_key STRING,
+                kafka_timestamp TIMESTAMP,
+                uuid STRING,
+                ts TIMESTAMP,
+                consumption DOUBLE,
+                month STRING,
+                day STRING,
+                hour STRING,
+                minute STRING,
+                date STRING,
+                key STRING,
+                processing_time TIMESTAMP,
+                batch_id LONG
+            )
             USING hudi
             LOCATION '{table_path}'
+            TBLPROPERTIES (
+                'hoodie.table.name' = '{iDBSchema}_{iTable}',
+                'hoodie.datasource.write.recordkey.field' = 'uuid',
+                'hoodie.datasource.write.partitionpath.field' = 'date',
+                'hoodie.datasource.write.precombine.field' = 'ts',
+                'hoodie.datasource.write.table.type' = 'COPY_ON_WRITE'
+            )
         """)
-        print(f"Table {iDBSchema}.{iTable} registered")
+        print(f"Table {iDBSchema}.{iTable} registered with schema")
 
         return table_path
     except Exception as e:
