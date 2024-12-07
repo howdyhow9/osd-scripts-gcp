@@ -72,7 +72,6 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
                 TBLPROPERTIES (
                     'hoodie.table.name'='{iDBSchema}_{iTable}',
                     'hoodie.datasource.write.recordkey.field'='uuid',
-                    'hoodie.datasource.write.partitionpath.field'='date',
                     'hoodie.datasource.write.precombine.field'='ts',
                     'hoodie.datasource.write.operation'='bulk_insert',
                     'hoodie.bulkinsert.shuffle.parallelism'='2',
@@ -106,7 +105,6 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
             hudiOptions = {
                 'hoodie.table.name': f"{iDBSchema}_{iTable}",
                 'hoodie.datasource.write.recordkey.field': 'uuid',
-                'hoodie.datasource.write.partitionpath.field': 'date',
                 'hoodie.datasource.write.precombine.field': 'ts',
                 'hoodie.datasource.write.operation': 'bulk_insert',
                 'hoodie.bulkinsert.shuffle.parallelism': '2',
