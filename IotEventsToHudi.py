@@ -61,6 +61,28 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
                 print(f"Error creating schema {iDBSchema}: {str(e)}")
                 raise
 
+            # Drop and recreate the Hudi table definition
+            spark_session.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
+            spark_session.sql(f"""
+                CREATE TABLE {iDBSchema}.{iTable}
+                USING hudi
+                LOCATION '{table_path}'
+                TBLPROPERTIES (
+                    'hoodie.table.name'='{iDBSchema}_{iTable}',
+                    'hoodie.datasource.write.recordkey.field'='uuid',
+                    'hoodie.datasource.write.partitionpath.field'='date',
+                    'hoodie.datasource.write.precombine.field'='ts',
+                    'hoodie.datasource.write.operation'='bulk_insert',
+                    'hoodie.bulkinsert.shuffle.parallelism'='2',
+                    'hoodie.datasource.write.table.type'='COPY_ON_WRITE',
+                    'hoodie.cleaner.policy'='KEEP_LATEST_COMMITS',
+                    'hoodie.cleaner.commits.retained'='10',
+                    'hoodie.keep.min.commits'='20',
+                    'hoodie.keep.max.commits'='30'
+                )
+            """)
+            print(f"Table {iDBSchema}.{iTable} created or recreated")
+
             # Cast Kafka message format
             kafka_df = df.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp")
             print("Number of records in Kafka batch:", df.count())
