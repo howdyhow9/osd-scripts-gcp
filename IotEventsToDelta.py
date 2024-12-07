@@ -53,6 +53,17 @@ def parse_json_value(df):
         F.col("parsed_value.key").alias("event_key")
     )
 
+def initialize_delta_table(spark, table_loc):
+    """Initialize or recreate Delta table with correct schema"""
+    try:
+        # Try to delete the existing table location
+        dbutils = spark.conf.get("spark.databricks.service.dbutils", None)
+        if dbutils:
+            dbutils.fs.rm(table_loc, True)
+        print(f"Cleaned up existing table at {table_loc}")
+    except Exception as e:
+        print(f"Note: Could not clean up table location: {str(e)}")
+
 def kafka_to_delta(df, batch_id):
     """Process each batch of Kafka data and write to Delta Lake"""
 
@@ -77,9 +88,16 @@ def kafka_to_delta(df, batch_id):
         print("Schema of parsed data:")
         final_df.printSchema()
 
-        # Write batch to Delta Lake
+        # Drop the table if it's the first batch
+        if batch_id == 0:
+            print("First batch - initializing table...")
+            spark.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
+            initialize_delta_table(spark, table_loc)
+
+        # Write batch to Delta Lake with schema merging enabled
         final_df.write \
             .format("delta") \
+            .option("mergeSchema", "true") \
             .mode("append") \
             .save(table_loc)
 
@@ -113,9 +131,17 @@ def main():
         print("Creating Spark session...")
         spark = create_spark_session()
 
+        # Set Delta configurations
+        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+
         # Define schema and table names
         iDBSchema = "kafka_delta"
         iTable = "kafka"
+
+        # Drop existing table if any
+        table_loc = f"gs://osd-data/{iDBSchema}.db/{iTable}"
+        spark.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
+        initialize_delta_table(spark, table_loc)
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
