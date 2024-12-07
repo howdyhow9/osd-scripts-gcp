@@ -44,13 +44,13 @@ def generate_iot_data(spark, num_records=5000):
     df = spark.createDataFrame(data, schema)
 
     # Add additional columns using F.* for clarity
-    return df.withColumn("month", F.month("ts")) \
-        .withColumn("day", F.dayofmonth("ts")) \
-        .withColumn("hour", F.hour("ts")) \
-        .withColumn("minute", F.minute("ts")) \
-        .withColumn("date", F.date_format("ts", "yyyy/MM/dd")) \
+    return df.withColumn("month", F.month(F.col("ts"))) \
+        .withColumn("day", F.dayofmonth(F.col("ts"))) \
+        .withColumn("hour", F.hour(F.col("ts"))) \
+        .withColumn("minute", F.minute(F.col("ts"))) \
+        .withColumn("date", F.date_format(F.col("ts"), "yyyy/MM/dd")) \
         .withColumn("key", F.concat(F.col("uuid"), F.lit("_"),
-                                    F.date_format("ts", "yyyy-MM-dd HH:mm:ss")))
+                                    F.date_format(F.col("ts"), "yyyy-MM-dd HH:mm:ss")))
 
 def write_to_kafka(df, bootstrap_servers, topic):
     """Write DataFrame to Kafka topic"""
