@@ -35,15 +35,13 @@ def parse_json_value(df):
     ])
 
     # Parse JSON value column, maintaining exact field names from producer
-    parsed_df = df.withColumn("parsed_value",
-                              F.from_json(F.col("value"), json_schema)) \
+    return df.withColumn("parsed_value",
+                         F.from_json(F.col("value"), json_schema)) \
         .select(
         F.col("key").alias("kafka_key"),
         F.col("timestamp").alias("kafka_timestamp"),
         "parsed_value.*"
     )
-
-    return parsed_df
 
 def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
     """Create a processor function with access to spark session and table info"""
@@ -57,32 +55,11 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
         try:
             # Create schema if not exists
             try:
-                spark_session.sql(f"CREATE DATABASE IF NOT EXISTS {iDBSchema}")
+                spark_session.sql(f"create database if not exists {iDBSchema}")
                 print(f"Schema {iDBSchema} created or already exists")
             except Exception as e:
                 print(f"Error creating schema {iDBSchema}: {str(e)}")
                 raise
-
-            # Drop and recreate the Hudi table definition
-            spark_session.sql(f"DROP TABLE IF EXISTS {iDBSchema}.{iTable}")
-            spark_session.sql(f"""
-                CREATE TABLE {iDBSchema}.{iTable}
-                USING hudi
-                LOCATION '{table_path}'
-                TBLPROPERTIES (
-                    'hoodie.table.name'='{iDBSchema}_{iTable}',
-                    'hoodie.datasource.write.recordkey.field'='uuid',
-                    'hoodie.datasource.write.precombine.field'='ts',
-                    'hoodie.datasource.write.operation'='bulk_insert',
-                    'hoodie.bulkinsert.shuffle.parallelism'='2',
-                    'hoodie.datasource.write.table.type'='COPY_ON_WRITE',
-                    'hoodie.cleaner.policy'='KEEP_LATEST_COMMITS',
-                    'hoodie.cleaner.commits.retained'='10',
-                    'hoodie.keep.min.commits'='20',
-                    'hoodie.keep.max.commits'='30'
-                )
-            """)
-            print(f"Table {iDBSchema}.{iTable} created or recreated")
 
             # Cast Kafka message format
             kafka_df = df.selectExpr("CAST(key AS STRING)", "CAST(value AS STRING)", "timestamp")
@@ -101,7 +78,7 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
             print("Schema of parsed data:")
             final_df.printSchema()
 
-            # Configure Hudi write options following reference pattern
+            # Configure Hudi write options without partitioning
             hudiOptions = {
                 'hoodie.table.name': f"{iDBSchema}_{iTable}",
                 'hoodie.datasource.write.recordkey.field': 'uuid',
@@ -164,6 +141,7 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
 
     return kafka_to_hudi
 
+
 def main():
     try:
         # Initialize Spark session
@@ -174,7 +152,7 @@ def main():
 
         # Show available databases
         print("Available databases:")
-        spark.sql("SHOW DATABASES").show()
+        spark.sql("show databases").show()
 
         # Define schema and table names
         iDBSchema = "kafka_hudi"
