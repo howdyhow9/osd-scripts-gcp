@@ -7,6 +7,7 @@ import os
 from google.cloud import storage
 import sys
 from datetime import datetime
+import builtins  # for Python's built-in round function
 
 # Set up GCS client and download the file
 client = storage.Client()
@@ -24,8 +25,7 @@ def generate_iot_data(spark, num_records=5000):
     """Generate IoT device data as a Spark DataFrame"""
     print("Starting data generation...")
 
-    # Create sample data first
-    from datetime import datetime
+    # Create sample data
     import random
 
     data = []
@@ -33,7 +33,8 @@ def generate_iot_data(spark, num_records=5000):
 
     for i in range(num_records):
         device_id = f"IoT_{random.randint(1,4):02d}"
-        consumption = round(random.uniform(40.0, 50.0), 2)
+        # Use Python's built-in round explicitly
+        consumption = builtins.round(random.uniform(40.0, 50.0), 2)
         data.append({
             "uuid": device_id,
             "ts": current_time,
@@ -46,8 +47,21 @@ def generate_iot_data(spark, num_records=5000):
             "key": f"{device_id}_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
         })
 
-    # Create DataFrame directly with all fields
-    df = spark.createDataFrame(data)
+    # Define schema explicitly
+    schema = StructType([
+        StructField("uuid", StringType(), False),
+        StructField("ts", TimestampType(), False),
+        StructField("consumption", DoubleType(), False),
+        StructField("month", StringType(), False),
+        StructField("day", StringType(), False),
+        StructField("hour", StringType(), False),
+        StructField("minute", StringType(), False),
+        StructField("date", StringType(), False),
+        StructField("key", StringType(), False)
+    ])
+
+    # Create DataFrame with explicit schema
+    df = spark.createDataFrame(data, schema)
 
     print("Generated DataFrame schema:")
     df.printSchema()
@@ -61,8 +75,6 @@ def write_to_kafka(df, bootstrap_servers, topic):
     """Write DataFrame to Kafka topic"""
 
     print("Preparing data for Kafka...")
-    print("DataFrame schema before Kafka preparation:")
-    df.printSchema()
 
     # Convert DataFrame to JSON string
     kafka_df = df.select(
@@ -72,6 +84,7 @@ def write_to_kafka(df, bootstrap_servers, topic):
 
     print("Kafka DataFrame schema:")
     kafka_df.printSchema()
+
     print("Sample of Kafka data:")
     kafka_df.show(5, truncate=False)
 
