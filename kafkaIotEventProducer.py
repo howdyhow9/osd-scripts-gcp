@@ -6,6 +6,7 @@ from delta import *
 import os
 from google.cloud import storage
 import sys
+from datetime import datetime
 
 # Set up GCS client and download the file
 client = storage.Client()
@@ -21,39 +22,47 @@ from spark_config_delta import create_spark_session
 
 def generate_iot_data(spark, num_records=5000):
     """Generate IoT device data as a Spark DataFrame"""
+    print("Starting data generation...")
 
-    # Create schema for our data
-    schema = StructType([
-        StructField("uuid", StringType(), False),
-        StructField("ts", TimestampType(), False),
-        StructField("consumption", DoubleType(), False)
-    ])
-
-    # Generate sample data
+    # Create sample data first
     from datetime import datetime
     import random
 
     data = []
-    for _ in range(num_records):
+    current_time = datetime.now()
+
+    for i in range(num_records):
         device_id = f"IoT_{random.randint(1,4):02d}"
-        timestamp = datetime.now()
         consumption = round(random.uniform(40.0, 50.0), 2)
-        data.append((device_id, timestamp, consumption))
+        data.append({
+            "uuid": device_id,
+            "ts": current_time,
+            "consumption": consumption,
+            "month": str(current_time.month),
+            "day": str(current_time.day),
+            "hour": str(current_time.hour),
+            "minute": str(current_time.minute),
+            "date": current_time.strftime("%Y/%m/%d"),
+            "key": f"{device_id}_{current_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        })
 
-    # Create DataFrame
-    df = spark.createDataFrame(data, schema)
+    # Create DataFrame directly with all fields
+    df = spark.createDataFrame(data)
 
-    # Add additional columns using F.* for clarity
-    return df.withColumn("month", F.month(F.col("ts"))) \
-        .withColumn("day", F.dayofmonth(F.col("ts"))) \
-        .withColumn("hour", F.hour(F.col("ts"))) \
-        .withColumn("minute", F.minute(F.col("ts"))) \
-        .withColumn("date", F.date_format(F.col("ts"), "yyyy/MM/dd")) \
-        .withColumn("key", F.concat(F.col("uuid"), F.lit("_"),
-                                    F.date_format(F.col("ts"), "yyyy-MM-dd HH:mm:ss")))
+    print("Generated DataFrame schema:")
+    df.printSchema()
+
+    print("Sample of generated data:")
+    df.show(5, truncate=False)
+
+    return df
 
 def write_to_kafka(df, bootstrap_servers, topic):
     """Write DataFrame to Kafka topic"""
+
+    print("Preparing data for Kafka...")
+    print("DataFrame schema before Kafka preparation:")
+    df.printSchema()
 
     # Convert DataFrame to JSON string
     kafka_df = df.select(
@@ -61,12 +70,17 @@ def write_to_kafka(df, bootstrap_servers, topic):
         F.to_json(F.struct("*")).alias("value")
     )
 
+    print("Kafka DataFrame schema:")
+    kafka_df.printSchema()
+    print("Sample of Kafka data:")
+    kafka_df.show(5, truncate=False)
+
     # Write to Kafka
+    print(f"Writing to Kafka topic: {topic}")
     kafka_df.write \
         .format("kafka") \
         .option("kafka.bootstrap.servers", bootstrap_servers) \
         .option("topic", topic) \
-        .option("checkpointLocation", "/tmp/checkpoint") \
         .save()
 
 def main():
@@ -77,6 +91,7 @@ def main():
 
     try:
         # Create Spark session using imported method
+        print("Creating Spark session...")
         spark = create_spark_session()
 
         # Generate data
@@ -90,6 +105,9 @@ def main():
 
     except Exception as e:
         print(f"Error: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print(f"Stack trace:\n{traceback.format_exc()}")
     finally:
         if 'spark' in locals():
             spark.stop()
