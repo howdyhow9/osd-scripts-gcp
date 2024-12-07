@@ -52,7 +52,7 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
         """Process each batch of Kafka data and write to Hudi"""
 
         print(f"Processing batch: {batch_id}")
-        table_path = f"gs://osd-data/{db_name}.db/{table_name}"
+        table_path = f"gs://osd-data/{db_name}/{table_name}"
 
         try:
             # Cast Kafka message format
@@ -72,34 +72,26 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
 
             # Configure Hudi write options
             hudi_options = {
-                'hoodie.table.name': f"{db_name}_{table_name}",
-                'hoodie.datasource.write.recordkey.field': 'uuid',  # Using uuid as record key
-                'hoodie.datasource.write.precombine.field': 'ts',   # Using timestamp for precombine
+                'hoodie.table.name': table_name,
+                'hoodie.datasource.write.recordkey.field': 'uuid',
+                'hoodie.datasource.write.partitionpath.field': 'date',
+                'hoodie.datasource.write.precombine.field': 'ts',
                 'hoodie.datasource.write.operation': 'upsert',
                 'hoodie.upsert.shuffle.parallelism': '2',
                 'hoodie.datasource.write.table.type': 'COPY_ON_WRITE',
                 'hoodie.cleaner.policy': 'KEEP_LATEST_COMMITS',
-                'hoodie.cleaner.commits.retained': '10',
-                'hoodie.keep.min.commits': '20',
-                'hoodie.keep.max.commits': '30'
+                'hoodie.cleaner.commits.retained': '10'
             }
 
             # Write batch to Hudi
+            print(f"Writing to Hudi table at: {table_path}")
             final_df.write \
-                .format("org.apache.hudi") \
+                .format("hudi") \
                 .options(**hudi_options) \
                 .mode("append") \
                 .save(table_path)
 
-            # Create or update table metadata
-            spark_session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}")
-            spark_session.sql(f"""
-                CREATE TABLE IF NOT EXISTS {db_name}.{table_name}
-                USING hudi
-                LOCATION '{table_path}'
-            """)
-
-            print(f"Successfully wrote batch {batch_id} to {db_name}.{table_name}")
+            print(f"Successfully wrote batch {batch_id} to {table_path}")
 
             # Print batch statistics
             print("Batch statistics:")
@@ -119,33 +111,28 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
 
     return kafka_to_hudi
 
-def verify_table_results(spark, db_name, table_name):
-    """Verify table results with proper error handling"""
+def verify_hudi_data(spark, table_path):
+    """Verify Hudi table data"""
     try:
-        table_exists = (spark.sql(f"SHOW TABLES IN {db_name}")
-                        .filter(F.col("tableName") == table_name)
-                        .count() > 0)
+        # Read from Hudi table
+        df = spark.read.format("hudi").load(table_path)
 
-        if not table_exists:
-            print(f"No data was processed. Table {db_name}.{table_name} does not exist.")
-            return
+        # Calculate statistics
+        stats = df.select(
+            F.count("*").alias("total_records"),
+            F.countDistinct("uuid").alias("unique_devices"),
+            F.round(F.avg("consumption"), 2).alias("avg_consumption"),
+            F.min("ts").alias("earliest_event"),
+            F.max("ts").alias("latest_event"),
+            F.min("processing_time").alias("first_processed"),
+            F.max("processing_time").alias("last_processed")
+        )
 
-        result = spark.sql(f"""
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT uuid) as unique_devices,
-                ROUND(AVG(consumption), 2) as avg_consumption,
-                MIN(ts) as earliest_event,
-                MAX(ts) as latest_event,
-                MIN(processing_time) as first_processed,
-                MAX(processing_time) as last_processed
-            FROM {db_name}.{table_name}
-        """)
-        print("Final table statistics:")
-        result.show(truncate=False)
+        print("Table statistics:")
+        stats.show(truncate=False)
 
     except Exception as e:
-        print(f"Error verifying results: {str(e)}")
+        print(f"Error verifying Hudi data: {str(e)}")
 
 def main():
     try:
@@ -156,13 +143,7 @@ def main():
         # Define schema and table names
         db_name = "kafka_hudi"
         table_name = "iot_events"
-
-        # Show available databases
-        print("Available databases:")
-        spark.sql("show databases").show()
-
-        # Create database if not exists
-        spark.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}")
+        table_path = f"gs://osd-data/{db_name}/{table_name}"
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
@@ -191,7 +172,7 @@ def main():
         query.awaitTermination()
 
         print("Stream processing completed. Verifying results...")
-        verify_table_results(spark, db_name, table_name)
+        verify_hudi_data(spark, table_path)
 
     except Exception as e:
         print(f"Error in main process: {str(e)}")
