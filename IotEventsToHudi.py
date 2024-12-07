@@ -43,7 +43,7 @@ def parse_json_value(df):
         "parsed_value.*"
     )
 
-def create_kafka_to_hudi_processor(table_path):
+def create_kafka_to_hudi_processor(table_path, table_name):
     """Create a processor function with access to table path"""
 
     def kafka_to_hudi(df, batch_id):
@@ -67,26 +67,34 @@ def create_kafka_to_hudi_processor(table_path):
             print("Schema of parsed data:")
             final_df.printSchema()
 
-            # Configure Hudi write options
-            hudi_options = {
-                'hoodie.table.name': 'iot_events',
+            # Configure Hudi write options following reference pattern
+            hudiOptions = {
+                'hoodie.table.name': table_name,
                 'hoodie.datasource.write.recordkey.field': 'uuid',
-                'hoodie.datasource.write.partitionpath.field': 'date',
                 'hoodie.datasource.write.precombine.field': 'ts',
-                'hoodie.datasource.write.operation': 'upsert',
-                'hoodie.upsert.shuffle.parallelism': '2',
-                'hoodie.datasource.write.table.type': 'COPY_ON_WRITE'
+                'hoodie.datasource.write.operation': 'bulk_insert',
+                'hoodie.bulkinsert.shuffle.parallelism': '2',
+                'hoodie.datasource.write.table.type': 'COPY_ON_WRITE',
+                'hoodie.cleaner.policy': 'KEEP_LATEST_COMMITS',
+                'hoodie.cleaner.commits.retained': '10',
+                'hoodie.keep.min.commits': '20',
+                'hoodie.keep.max.commits': '30'
             }
 
-            # Write batch to Hudi
+            # Write batch to Hudi following reference pattern
             print(f"Writing to Hudi table at: {table_path}")
             final_df.write \
-                .format("hudi") \
-                .options(**hudi_options) \
+                .format("org.apache.hudi") \
+                .options(**hudiOptions) \
                 .mode("append") \
                 .save(table_path)
 
             print(f"Successfully wrote batch {batch_id}")
+
+            # Verify the write by reading back
+            print("Verifying written data:")
+            read_df = final_df.limit(5)
+            read_df.show()
 
             # Print batch statistics
             print("Batch statistics:")
@@ -112,8 +120,9 @@ def main():
         print("Creating Spark session...")
         spark = create_spark_session()
 
-        # Define table path
-        table_path = "gs://osd-data/hudi/iot_events"
+        # Define table details
+        table_name = "kafka_iot_events"
+        table_path = f"gs://osd-data/source/{table_name}"
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
@@ -127,14 +136,14 @@ def main():
             .load()
 
         print("Starting stream processing...")
-        # Create processor function with table path
-        processor = create_kafka_to_hudi_processor(table_path)
+        # Create processor function with table info
+        processor = create_kafka_to_hudi_processor(table_path, table_name)
 
         # Write stream using foreachBatch
         query = df_kafka.writeStream \
             .foreachBatch(processor) \
             .outputMode("append") \
-            .option("checkpointLocation", "gs://osd-data/checkpoints/hudi/iot_events") \
+            .option("checkpointLocation", f"gs://osd-data/checkpoints/{table_name}") \
             .trigger(once=True) \
             .start()
 
