@@ -43,14 +43,37 @@ def parse_json_value(df):
         "parsed_value.*"
     )
 
-def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
+def setup_hudi_table(spark, iDBSchema, iTable):
+    """Setup schema and table for Hudi"""
+    try:
+        # Create schema if not exists
+        spark.sql(f"create database if not exists {iDBSchema}")
+        print(f"Schema {iDBSchema} created or already exists")
+
+        # Get table location path
+        table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
+
+        # Register table in Hive metastore
+        spark.sql(f"""
+            CREATE TABLE IF NOT EXISTS {iDBSchema}.{iTable}
+            USING hudi
+            LOCATION '{table_path}'
+        """)
+        print(f"Table {iDBSchema}.{iTable} registered")
+
+        return table_path
+    except Exception as e:
+        print(f"Error setting up schema/table: {str(e)}")
+        raise
+
+def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
     """Create a processor function with access to spark session and table info"""
 
     def kafka_to_hudi(df, batch_id):
         """Process each batch of Kafka data and write to Hudi"""
 
         print(f"Processing batch: {batch_id}")
-        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
+        table_path = f"gs://osd-data/{iDBSchema}.db/{iTable}"
 
         try:
             # Cast Kafka message format
@@ -70,7 +93,7 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
 
             # Configure Hudi write options following reference pattern
             hudiOptions = {
-                'hoodie.table.name': f"{db_name}_{table_name}",
+                'hoodie.table.name': f"{iDBSchema}_{iTable}",
                 'hoodie.datasource.write.recordkey.field': 'uuid',
                 'hoodie.datasource.write.partitionpath.field': 'date',
                 'hoodie.datasource.write.precombine.field': 'ts',
@@ -83,15 +106,20 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
                 'hoodie.keep.max.commits': '30'
             }
 
-            # Write batch to Hudi
-            print(f"Writing to Hudi table at: {table_loc}")
+            # Write to Hudi table
+            print(f"Writing to Hudi table at: {table_path}")
             final_df.write \
                 .format("org.apache.hudi") \
                 .options(**hudiOptions) \
                 .mode("append") \
-                .save(table_loc)
+                .save(table_path)
 
-            print(f"Successfully wrote batch {batch_id} to {db_name}.{table_name}")
+            print(f"Successfully wrote batch {batch_id}")
+
+            # Verify the write by reading back
+            print("Verifying written data:")
+            read_df = spark_session.read.format("hudi").load(table_path)
+            read_df.show(5)
 
             # Print batch statistics
             print("Batch statistics:")
@@ -111,29 +139,6 @@ def create_kafka_to_hudi_processor(spark_session, db_name, table_name):
 
     return kafka_to_hudi
 
-def verify_hudi_data(spark, table_path):
-    """Verify Hudi table data"""
-    try:
-        # Read from Hudi table
-        df = spark.read.format("org.apache.hudi").load(table_path)
-
-        # Calculate statistics
-        stats = df.select(
-            F.count("*").alias("total_records"),
-            F.countDistinct("uuid").alias("unique_devices"),
-            F.round(F.avg("consumption"), 2).alias("avg_consumption"),
-            F.min("ts").alias("earliest_event"),
-            F.max("ts").alias("latest_event"),
-            F.min("processing_time").alias("first_processed"),
-            F.max("processing_time").alias("last_processed")
-        )
-
-        print("Table statistics:")
-        stats.show(truncate=False)
-
-    except Exception as e:
-        print(f"Error verifying Hudi data: {str(e)}")
-
 def main():
     try:
         # Initialize Spark session
@@ -141,11 +146,16 @@ def main():
         spark = create_spark_session()
 
         # Define schema and table names
-        db_name = "kafka_hudi"
-        table_name = "iot_events"
+        iDBSchema = "kafka_hudi"
+        iTable = "iot_events"
 
-        # Clean up existing table location
-        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
+        # Show available databases
+        print("Available databases:")
+        spark.sql("show databases").show()
+
+        # Setup schema and table
+        print("Setting up schema and table...")
+        table_path = setup_hudi_table(spark, iDBSchema, iTable)
 
         print("Setting up Kafka stream...")
         # Read from Kafka stream
@@ -160,21 +170,25 @@ def main():
 
         print("Starting stream processing...")
         # Create processor function with spark session and table info
-        processor = create_kafka_to_hudi_processor(spark, db_name, table_name)
+        processor = create_kafka_to_hudi_processor(spark, iDBSchema, iTable)
 
         # Write stream using foreachBatch
         query = df_kafka.writeStream \
             .foreachBatch(processor) \
             .outputMode("append") \
-            .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}.db/{table_name}") \
+            .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}.db/{iTable}") \
             .trigger(once=True) \
             .start()
 
         # Wait for the streaming to finish
         query.awaitTermination()
 
-        print("Stream processing completed. Verifying results...")
-        verify_hudi_data(spark, table_loc)
+        print("Stream processing completed")
+
+        # Verify the final table
+        print("Verifying final table data:")
+        read_df = spark.read.format("hudi").load(table_path)
+        read_df.show(5)
 
     except Exception as e:
         print(f"Error in main process: {str(e)}")
