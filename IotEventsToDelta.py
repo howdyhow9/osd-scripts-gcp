@@ -36,13 +36,21 @@ def parse_json_value(df):
         StructField("key", StringType(), True)
     ])
 
-    # Parse JSON value column
+    # Parse JSON value column and rename duplicated key column
     return df.withColumn("parsed_value",
                          F.from_json(F.col("value"), json_schema)) \
         .select(
-        "key",
+        F.col("key").alias("kafka_key"),
         "timestamp",
-        "parsed_value.*"
+        F.col("parsed_value.uuid"),
+        F.col("parsed_value.ts"),
+        F.col("parsed_value.consumption"),
+        F.col("parsed_value.month"),
+        F.col("parsed_value.day"),
+        F.col("parsed_value.hour"),
+        F.col("parsed_value.minute"),
+        F.col("parsed_value.date"),
+        F.col("parsed_value.key").alias("event_key")
     )
 
 def kafka_to_delta(df, batch_id):
@@ -50,7 +58,7 @@ def kafka_to_delta(df, batch_id):
 
     print(f"Processing batch: {batch_id}")
     iDBSchema = "kafka_delta"
-    iTable = "iot_events"
+    iTable = "kafka"
     table_loc = f"gs://osd-data/{iDBSchema}.db/{iTable}"
 
     try:
