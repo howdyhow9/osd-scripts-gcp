@@ -35,13 +35,15 @@ def parse_json_value(df):
     ])
 
     # Parse JSON value column, maintaining exact field names from producer
-    return df.withColumn("parsed_value",
-                         F.from_json(F.col("value"), json_schema)) \
+    parsed_df = df.withColumn("parsed_value",
+                              F.from_json(F.col("value"), json_schema)) \
         .select(
         F.col("key").alias("kafka_key"),
         F.col("timestamp").alias("kafka_timestamp"),
         "parsed_value.*"
     )
+
+    return parsed_df
 
 def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
     """Create a processor function with access to spark session and table info"""
@@ -55,7 +57,7 @@ def create_kafka_to_hudi_processor(spark_session, iDBSchema, iTable):
         try:
             # Create schema if not exists
             try:
-                spark_session.sql(f"create database if not exists {iDBSchema}")
+                spark_session.sql(f"CREATE DATABASE IF NOT EXISTS {iDBSchema}")
                 print(f"Schema {iDBSchema} created or already exists")
             except Exception as e:
                 print(f"Error creating schema {iDBSchema}: {str(e)}")
@@ -174,7 +176,7 @@ def main():
 
         # Show available databases
         print("Available databases:")
-        spark.sql("show databases").show()
+        spark.sql("SHOW DATABASES").show()
 
         # Define schema and table names
         iDBSchema = "kafka_hudi"
