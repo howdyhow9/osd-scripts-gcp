@@ -178,7 +178,7 @@ def main():
             .foreachBatch(processor) \
             .outputMode("append") \
             .option("checkpointLocation", f"gs://osd-data/checkpoints/{iDBSchema}.db/{iTable}") \
-            .trigger(once=True) \
+            .trigger(processingTime='1 minute') \
             .start()
 
         # Wait for the streaming to finish

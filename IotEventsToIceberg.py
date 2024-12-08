@@ -182,7 +182,7 @@ def main():
         )) \
             .outputMode("append") \
             .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
-            .trigger(once=True) \
+            .trigger(processingTime='1 minute') \
             .start()
 
         print("Streaming query started. Waiting for termination...")
