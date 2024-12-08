@@ -6,6 +6,7 @@ from delta import *
 import os
 from google.cloud import storage
 import sys
+import time
 
 # Set up GCS client and download the file
 client = storage.Client()
@@ -51,6 +52,9 @@ def create_kafka_to_delta_processor(spark_session, db_name, table_name):
 
     def kafka_to_delta(df, batch_id):
         """Process each batch of Kafka data and write to Delta Lake"""
+        if df.rdd.isEmpty():
+            print(f"Batch {batch_id} is empty, skipping processing")
+            return
 
         print(f"Processing batch: {batch_id}")
         table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
@@ -67,9 +71,7 @@ def create_kafka_to_delta_processor(spark_session, db_name, table_name):
                 .withColumn("batch_id", F.lit(batch_id))
 
             print("Preview of parsed data:")
-            final_df.show(5, truncate=False)
-            print("Schema of parsed data:")
-            final_df.printSchema()
+            final_df.show(2, truncate=False)
 
             # Write batch to Delta Lake
             final_df.write \
@@ -86,10 +88,8 @@ def create_kafka_to_delta_processor(spark_session, db_name, table_name):
                 LOCATION '{table_loc}'
             """)
 
-            print(f"Successfully wrote batch {batch_id} to {db_name}.{table_name}")
-
             # Print batch statistics
-            print("Batch statistics:")
+            print(f"Batch {batch_id} statistics:")
             final_df.select(
                 F.count("*").alias("total_records"),
                 F.countDistinct("uuid").alias("unique_devices"),
@@ -102,67 +102,64 @@ def create_kafka_to_delta_processor(spark_session, db_name, table_name):
             print(f"Error processing batch {batch_id}: {str(e)}")
             import traceback
             print(f"Stack trace:\n{traceback.format_exc()}")
-            raise
+            # Don't raise the exception - let it continue processing next batch
 
     return kafka_to_delta
 
-def verify_table_results(spark, db_name, table_name):
-    """Verify table results with proper error handling"""
-    try:
-        table_exists = (spark.sql(f"SHOW TABLES IN {db_name}")
-                        .filter(F.col("tableName") == table_name)
-                        .count() > 0)
+def monitor_streaming_query(query, db_name, table_name, spark):
+    """Monitor the streaming query and periodically show statistics"""
+    while query.isActive:
+        try:
+            # Print query progress
+            print("\nStreaming Query Status:")
+            print(f"Input rate: {query.lastProgress['inputRate'] if query.lastProgress else 'N/A'} records/sec")
+            print(f"Processing rate: {query.lastProgress['processedRowsPerSecond'] if query.lastProgress else 'N/A'} records/sec")
 
-        if not table_exists:
-            print(f"No data was processed. Table {db_name}.{table_name} does not exist.")
-            return
+            # Show table statistics every minute
+            result = spark.sql(f"""
+                SELECT 
+                    COUNT(*) as total_records,
+                    COUNT(DISTINCT uuid) as unique_devices,
+                    ROUND(AVG(consumption), 2) as avg_consumption,
+                    MAX(ts) as latest_event,
+                    MAX(processing_time) as last_processed
+                FROM {db_name}.{table_name}
+                WHERE processing_time >= current_timestamp() - INTERVAL 1 MINUTE
+            """)
+            print("\nLast minute statistics:")
+            result.show(truncate=False)
 
-        result = spark.sql(f"""
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT uuid) as unique_devices,
-                ROUND(AVG(consumption), 2) as avg_consumption,
-                MIN(ts) as earliest_event,
-                MAX(ts) as latest_event,
-                MIN(processing_time) as first_processed,
-                MAX(processing_time) as last_processed
-            FROM {db_name}.{table_name}
-        """)
-        print("Final table statistics:")
-        result.show(truncate=False)
+        except Exception as e:
+            print(f"Error in monitoring: {str(e)}")
 
-    except Exception as e:
-        print(f"Error verifying results: {str(e)}")
+        time.sleep(60)  # Wait for 1 minute before next status update
 
 def main():
-    try:
-        # Initialize Spark session
-        print("Creating Spark session...")
-        spark = create_spark_session()
+    # Initialize Spark session
+    print("Creating Spark session...")
+    spark = create_spark_session()
 
-        # Set Delta configurations
-        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+    # Set Delta configurations
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
-        # Define schema and table names
-        db_name = "kafka_delta"
-        table_name = "iot_events"
+    # Define schema and table names
+    db_name = "kafka_delta"
+    table_name = "iot_events"
 
-        # Clean up existing table
-        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
-        spark.sql(f"DROP TABLE IF EXISTS {db_name}.{table_name}")
-
-        print("Setting up Kafka stream...")
-        # Read from Kafka stream
-        df_kafka = spark \
-            .readStream \
-            .format("kafka") \
-            .option("kafka.bootstrap.servers", "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
-            .option("failOnDataLoss", "false") \
-            .option("subscribe", "osds-topic") \
-            .option("startingOffsets", "earliest") \
+    while True:  # Continuous retry loop
+        try:
+            print("Setting up Kafka stream...")
+            # Read from Kafka stream
+            df_kafka = spark \
+                .readStream \
+                .format("kafka") \
+                .option("kafka.bootstrap.servers", "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
+                .option("failOnDataLoss", "false") \
+                .option("subscribe", "osds-topic") \
+                .option("startingOffsets", "latest") \  # Changed to 'latest' for continuous processing
             .load()
 
-        print("Starting stream processing...")
+        print("Starting continuous stream processing...")
         # Create processor function with spark session and table info
         processor = create_kafka_to_delta_processor(spark, db_name, table_name)
 
@@ -171,23 +168,26 @@ def main():
             .foreachBatch(processor) \
             .outputMode("append") \
             .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
-            .trigger(once=True) \
-            .start()
+            .trigger(processingTime='1 minute') \  # Process every minute
+        .start()
 
-        # Wait for the streaming to finish
-        query.awaitTermination()
+    # Start the monitoring thread
+    import threading
+    monitor_thread = threading.Thread(
+        target=monitor_streaming_query,
+        args=(query, db_name, table_name, spark),
+        daemon=True
+    )
+    monitor_thread.start()
 
-        print("Stream processing completed. Verifying results...")
-        verify_table_results(spark, db_name, table_name)
+    # Wait for the streaming to terminate (if it does)
+    query.awaitTermination()
 
-    except Exception as e:
-        print(f"Error in main process: {str(e)}")
-        import traceback
-        print(f"Stack trace:\n{traceback.format_exc()}")
-    finally:
-        if 'spark' in locals():
-            spark.stop()
-            print("Spark session stopped")
+except Exception as e:
+print(f"Error in stream processing: {str(e)}")
+print("Attempting to restart streaming in 10 seconds...")
+time.sleep(10)
+continue
 
 if __name__ == "__main__":
     main()

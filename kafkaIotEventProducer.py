@@ -7,7 +7,8 @@ import os
 from google.cloud import storage
 import sys
 from datetime import datetime
-import builtins  # for Python's built-in round function
+import builtins
+import time
 
 # Set up GCS client and download the file
 client = storage.Client()
@@ -21,19 +22,15 @@ sys.path.insert(0, '/tmp')
 # Import spark session creation module
 from spark_config_delta import create_spark_session
 
-def generate_iot_data(spark, num_records=5000):
-    """Generate IoT device data as a Spark DataFrame"""
-    print("Starting data generation...")
-
-    # Create sample data
+def generate_iot_batch(spark, events_per_batch=60):
+    """Generate a batch of IoT device data as a Spark DataFrame"""
     import random
 
     data = []
     current_time = datetime.now()
 
-    for i in range(num_records):
+    for _ in range(events_per_batch):
         device_id = f"IoT_{random.randint(1,4):02d}"
-        # Use Python's built-in round explicitly
         consumption = builtins.round(random.uniform(40.0, 50.0), 2)
         data.append({
             "uuid": device_id,
@@ -60,71 +57,85 @@ def generate_iot_data(spark, num_records=5000):
         StructField("key", StringType(), False)
     ])
 
-    # Create DataFrame with explicit schema
-    df = spark.createDataFrame(data, schema)
-
-    print("Generated DataFrame schema:")
-    df.printSchema()
-
-    print("Sample of generated data:")
-    df.show(5, truncate=False)
-
-    return df
+    return spark.createDataFrame(data, schema)
 
 def write_to_kafka(df, bootstrap_servers, topic):
     """Write DataFrame to Kafka topic"""
-
-    print("Preparing data for Kafka...")
-
     # Convert DataFrame to JSON string
     kafka_df = df.select(
         F.col("key").cast("string").alias("key"),
         F.to_json(F.struct("*")).alias("value")
     )
 
-    print("Kafka DataFrame schema:")
-    kafka_df.printSchema()
-
-    print("Sample of Kafka data:")
-    kafka_df.show(5, truncate=False)
-
     # Write to Kafka
-    print(f"Writing to Kafka topic: {topic}")
     kafka_df.write \
         .format("kafka") \
         .option("kafka.bootstrap.servers", bootstrap_servers) \
         .option("topic", topic) \
         .save()
 
+    return kafka_df.count()
+
+def continuous_generation(spark, bootstrap_servers, topic, events_per_minute=60):
+    """Continuously generate and send events to Kafka"""
+    batch_interval = 60  # seconds (1 minute)
+
+    print(f"Starting continuous generation of {events_per_minute} events per minute...")
+    print(f"Writing to Kafka topic: {topic}")
+
+    while True:  # Run indefinitely
+        try:
+            batch_start_time = time.time()
+
+            # Generate and write batch
+            try:
+                df = generate_iot_batch(spark, events_per_minute)
+                events_written = write_to_kafka(df, bootstrap_servers, topic)
+
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{current_time}] Successfully wrote {events_written} events to Kafka")
+
+                # Calculate time to wait
+                processing_time = time.time() - batch_start_time
+                wait_time = max(0, batch_interval - processing_time)
+
+                if wait_time > 0:
+                    print(f"Waiting {wait_time:.2f} seconds until next batch...")
+                    time.sleep(wait_time)
+
+            except Exception as batch_error:
+                print(f"Error in batch: {str(batch_error)}")
+                print("Continuing with next batch after a short delay...")
+                time.sleep(5)  # Wait 5 seconds before retrying
+
+        except Exception as e:
+            print(f"Error in continuous generation loop: {str(e)}")
+            print("Attempting to continue operation...")
+            time.sleep(10)  # Wait 10 seconds before retrying the main loop
+
 def main():
     # Configuration
     bootstrap_servers = "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
     topic = "osds-topic"
-    num_records = 5000
+    events_per_minute = 60
+
+    # Create Spark session using imported method
+    print("Creating Spark session...")
+    spark = create_spark_session()
 
     try:
-        # Create Spark session using imported method
-        print("Creating Spark session...")
-        spark = create_spark_session()
-
-        # Generate data
-        print(f"Generating {num_records} IoT events...")
-        df = generate_iot_data(spark, num_records)
-
-        # Write to Kafka
-        print(f"Writing events to Kafka topic '{topic}'...")
-        write_to_kafka(df, bootstrap_servers, topic)
-        print("Successfully wrote events to Kafka")
-
+        # Start continuous generation - this will run indefinitely
+        continuous_generation(spark, bootstrap_servers, topic, events_per_minute)
+    except KeyboardInterrupt:
+        print("\nReceived shutdown signal...")
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Unexpected error in main: {str(e)}")
         print(f"Error type: {type(e)}")
         import traceback
         print(f"Stack trace:\n{traceback.format_exc()}")
-    finally:
-        if 'spark' in locals():
-            spark.stop()
-            print("Spark session stopped")
+
+    # Note: We don't stop the Spark session - it will keep running
+    print("Process ended but Spark session remains active")
 
 if __name__ == "__main__":
     main()
