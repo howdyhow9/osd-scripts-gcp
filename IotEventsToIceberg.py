@@ -5,9 +5,6 @@ from pyspark.sql.types import *
 import os
 from google.cloud import storage
 import sys
-import time
-from datetime import datetime
-import threading
 
 # Set up GCS client and download the file
 client = storage.Client()
@@ -23,6 +20,8 @@ from spark_config_iceberg import create_spark_session
 
 def parse_json_value(df):
     """Parse the JSON value column into individual fields"""
+
+    # Define schema to match exactly with the producer schema
     json_schema = StructType([
         StructField("uuid", StringType(), False),
         StructField("ts", TimestampType(), False),
@@ -35,6 +34,7 @@ def parse_json_value(df):
         StructField("key", StringType(), False)
     ])
 
+    # Parse JSON value column, maintaining exact field names from producer
     parsed_df = df.withColumn("parsed_value",
                               F.from_json(F.col("value"), json_schema)) \
         .select(
@@ -47,13 +47,8 @@ def parse_json_value(df):
 
 def process_kafka_batch(spark, df, batch_id, db_schema, table_name):
     """Process a batch of Kafka data and write to Iceberg"""
-    if df.rdd.isEmpty():
-        print(f"Batch {batch_id} is empty, skipping processing")
-        return
-
     try:
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\nProcessing batch {batch_id} at {current_time}")
+        print(f"Processing batch {batch_id} for table {db_schema}.{table_name}")
 
         # Get table location path
         table_path = f"gs://osd-data/{db_schema}.db/{table_name}"
@@ -68,15 +63,18 @@ def process_kafka_batch(spark, df, batch_id, db_schema, table_name):
         final_df = parsed_df.withColumn("processing_time", F.current_timestamp()) \
             .withColumn("batch_id", F.lit(batch_id))
 
+        print("Preview of parsed data:")
+        final_df.show(5, truncate=False)
+        print("Schema of parsed data:")
+        final_df.printSchema()
+
         # Create schema if not exists
         spark.sql(f"CREATE DATABASE IF NOT EXISTS {db_schema}")
 
-        # Create table if it doesn't exist
-        table_exists = (spark.sql(f"SHOW TABLES IN {db_schema}")
-                        .filter(F.col("tableName") == table_name)
-                        .count() > 0)
+        # Create table if it doesn't exist (for first batch)
+        if batch_id == 0:
+            spark.sql(f"DROP TABLE IF EXISTS {db_schema}.{table_name}")
 
-        if not table_exists:
             create_table_sql = f"""
             CREATE TABLE {db_schema}.{table_name} (
                 {', '.join([f"{col} {str(dtype).replace('Type','')}"
@@ -96,118 +94,112 @@ def process_kafka_batch(spark, df, batch_id, db_schema, table_name):
             )
             """
             spark.sql(create_table_sql)
-            print(f"Created new table {db_schema}.{table_name}")
 
         # Write batch to Iceberg
+        print(f"Writing batch to Iceberg table at: {table_path}")
         final_df.write \
             .format("iceberg") \
             .mode("append") \
             .saveAsTable(f"{db_schema}.{table_name}")
 
+        print(f"Successfully wrote batch {batch_id} to {table_path}")
+
         # Print batch statistics
-        print("\nBatch Statistics:")
-        stats = final_df.select(
+        print("Batch Statistics:")
+        final_df.select(
             F.count("*").alias("total_records"),
             F.countDistinct("uuid").alias("unique_devices"),
             F.round(F.avg("consumption"), 2).alias("avg_consumption"),
             F.date_format(F.min("ts"), "yyyy-MM-dd HH:mm:ss").alias("earliest_event"),
             F.date_format(F.max("ts"), "yyyy-MM-dd HH:mm:ss").alias("latest_event")
-        ).collect()[0]
-
-        print(f"Records processed: {stats['total_records']}")
-        print(f"Unique devices: {stats['unique_devices']}")
-        print(f"Average consumption: {stats['avg_consumption']}")
-        print(f"Time range: {stats['earliest_event']} to {stats['latest_event']}")
+        ).show(truncate=False)
 
     except Exception as e:
         print(f"Error processing batch {batch_id}: {str(e)}")
         import traceback
         print(f"Stack trace:\n{traceback.format_exc()}")
-        # Don't raise the exception to keep the stream running
+        raise
 
-def monitor_streaming_query(spark, query, db_schema, table_name):
-    """Monitor the streaming query and show periodic statistics"""
-    while query.isActive:
-        try:
-            time.sleep(60)  # Wait for 1 minute between stats
+def verify_table_results(spark, db_schema, table_name):
+    """Verify table results with proper error handling"""
+    try:
+        table_exists = (spark.sql(f"SHOW TABLES IN {db_schema}")
+                        .filter(F.col("tableName") == table_name)
+                        .count() > 0)
 
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"\nStreaming Statistics at {current_time}")
+        if not table_exists:
+            print(f"No data was processed. Table {db_schema}.{table_name} does not exist.")
+            return
 
-            # Show query progress
-            if query.lastProgress:
-                print(f"Input rate: {query.lastProgress['inputRate']} records/sec")
-                print(f"Processing rate: {query.lastProgress['processedRowsPerSecond']} records/sec")
+        result = spark.sql(f"""
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT uuid) as unique_devices,
+                ROUND(AVG(consumption), 2) as avg_consumption,
+                MIN(ts) as earliest_event,
+                MAX(ts) as latest_event,
+                MIN(processing_time) as first_processed,
+                MAX(processing_time) as last_processed
+            FROM {db_schema}.{table_name}
+        """)
+        print("Final table statistics:")
+        result.show(truncate=False)
 
-            # Show recent data statistics
-            result = spark.sql(f"""
-                SELECT 
-                    COUNT(*) as records_last_minute,
-                    COUNT(DISTINCT uuid) as unique_devices,
-                    ROUND(AVG(consumption), 2) as avg_consumption,
-                    MAX(ts) as latest_event
-                FROM {db_schema}.{table_name}
-                WHERE processing_time >= current_timestamp() - INTERVAL 1 MINUTE
-            """)
-            print("\nLast minute statistics:")
-            result.show(truncate=False)
-
-            # Show table history
-            print("\nRecent table history:")
-            spark.sql(f"SELECT * FROM {db_schema}.{table_name}.history LIMIT 5").show(truncate=False)
-
-        except Exception as e:
-            print(f"Error in monitoring: {str(e)}")
+    except Exception as e:
+        print(f"Error verifying results: {str(e)}")
+        raise
 
 def main():
-    print("Creating Spark session...")
-    spark = create_spark_session()
+    try:
+        # Initialize Spark session
+        print("Creating Spark session...")
+        spark = create_spark_session()
 
-    # Define schema and table names
-    db_name = "kafka_iceberg"
-    table_name = "iot_events"
+        # Define schema and table names
+        db_name = "kafka_iceberg"
+        table_name = "iot_events"
 
-    while True:  # Continuous retry loop
-        try:
-            print("\nSetting up Kafka stream...")
-            df_kafka = spark \
-                .readStream \
-                .format("kafka") \
-                .option("kafka.bootstrap.servers", "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
-                .option("subscribe", "osds-topic") \
-                .option("startingOffsets", "latest") \
-                .option("failOnDataLoss", "false") \
-                .load()
+        # Clean up existing table
+        table_loc = f"gs://osd-data/{db_name}.db/{table_name}"
+        spark.sql(f"DROP TABLE IF EXISTS {db_name}.{table_name}")
 
-            print("Starting continuous stream processing...")
-            query = df_kafka.writeStream \
-                .foreachBatch(lambda df, batch_id: process_kafka_batch(
-                spark, df, batch_id, db_name, table_name
-            )) \
-                .outputMode("append") \
-                .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
-                .trigger(processingTime='1 minute') \
-                .start()
+        print("Setting up Kafka stream...")
+        # Read from Kafka stream with exact configurations from template
+        df_kafka = spark \
+            .readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
+            .option("subscribe", "osds-topic") \
+            .option("startingOffsets", "earliest") \
+            .option("failOnDataLoss", "false") \
+            .load()
 
-            # Start monitoring thread
-            monitor_thread = threading.Thread(
-                target=monitor_streaming_query,
-                args=(spark, query, db_name, table_name),
-                daemon=True
-            )
-            monitor_thread.start()
+        print("Starting stream processing...")
+        # Process the stream
+        query = df_kafka.writeStream \
+            .foreachBatch(lambda df, batch_id: process_kafka_batch(
+            spark, df, batch_id, db_name, table_name
+        )) \
+            .outputMode("append") \
+            .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
+            .trigger(once=True) \
+            .start()
 
-            print("\nStream processing started successfully")
-            print("Monitoring for new data...")
+        print("Streaming query started. Waiting for termination...")
+        query.awaitTermination()
 
-            # Wait for the streaming to terminate (if it does)
-            query.awaitTermination()
+        # Verify results after stream completion
+        verify_table_results(spark, db_name, table_name)
 
-        except Exception as e:
-            print(f"\nError in stream processing: {str(e)}")
-            print("Waiting 10 seconds before restarting stream...")
-            time.sleep(10)
-            continue
+    except Exception as e:
+        print(f"Error in main execution: {str(e)}")
+        import traceback
+        print(f"Stack trace:\n{traceback.format_exc()}")
+        sys.exit(1)
+    finally:
+        if spark:
+            spark.stop()
+            print("Spark session stopped")
 
 if __name__ == "__main__":
     main()
