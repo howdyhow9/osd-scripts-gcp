@@ -132,7 +132,7 @@ def monitor_streaming_query(query, db_name, table_name, spark):
         except Exception as e:
             print(f"Error in monitoring: {str(e)}")
 
-        time.sleep(60)  # Wait for 1 minute before next status update
+        time.sleep(60)  
 
 def main():
     # Initialize Spark session
@@ -156,7 +156,7 @@ def main():
                 .option("kafka.bootstrap.servers", "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
                 .option("failOnDataLoss", "false") \
                 .option("subscribe", "osds-topic") \
-                .option("startingOffsets", "latest") \  # Changed to 'latest' for continuous processing
+                .option("startingOffsets", "latest") \
             .load()
 
         print("Starting continuous stream processing...")
@@ -168,7 +168,7 @@ def main():
             .foreachBatch(processor) \
             .outputMode("append") \
             .option("checkpointLocation", f"gs://osd-data/checkpoints/{db_name}/{table_name}") \
-            .trigger(processingTime='1 minute') \  # Process every minute
+            .trigger(processingTime='1 minute') \
         .start()
 
     # Start the monitoring thread
