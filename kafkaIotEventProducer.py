@@ -117,7 +117,7 @@ def main():
     # Configuration
     bootstrap_servers = "osds-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
     topic = "osds-topic"
-    events_per_minute = 60
+    events_per_minute = 10000
 
     # Create Spark session using imported method
     print("Creating Spark session...")
