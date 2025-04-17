@@ -60,12 +60,12 @@ hudi_options_cow = {
 }
 
 # Function to write to Hudi
-def write_hudi(df, base_path, hudi_options, table_type, operation="upsert  mode="append"):
-df.write.format("hudi") \
-    .options(**hudi_options, **{
-    "hoodie.datasource.write.table.type": table_type,
-    "hoodie.datasource.write.operation": operation
-}) \
+def write_hudi(df, base_path, hudi_options, table_type, operation="upsert", mode="append"):
+    df.write.format("hudi") \
+        .options(**hudi_options, **{
+        "hoodie.datasource.write.table.type": table_type,
+        "hoodie.datasource.write.operation": operation
+    }) \
     .mode(mode) \
     .save(base_path)
 
