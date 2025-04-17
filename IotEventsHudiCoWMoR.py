@@ -1,22 +1,33 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
+from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
 import os
-from google.cloud import storage
-import sys
 
-# Set up GCS client and download the file
-client = storage.Client()
-bucket = client.get_bucket("osd-scripts")
-blob = bucket.blob("spark_config_hudi.py")
-blob.download_to_filename("/tmp/spark_config_hudi.py")
+def create_spark_session():
+    """Initialize Spark session with Hudi, Hive, and GCS configurations"""
+    builder = SparkSession.builder \
+        .config("spark.jars.packages", 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1') \
+        .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.kryo.registrator", "org.apache.spark.HoodieSparkKryoRegistrar") \
+        .config("spark.sql.warehouse.dir", "gs://osd-data/") \
+        .config("hive.metastore.warehouse.dir", "gs://osd-data/") \
+        .config("javax.jdo.option.ConnectionURL", "jdbc:postgresql://postgres:5432/hive_metastore") \
+        .config("spark.sql.catalogImplementation", "hive") \
+        .config("javax.jdo.option.ConnectionDriverName", "org.postgresql.Driver") \
+        .config("javax.jdo.option.ConnectionUserName", "hive") \
+        .config("javax.jdo.option.ConnectionPassword", "GUYgsjsj@123") \
+        .config("datanucleus.schema.autoCreateTables", "true") \
+        .config("hive.metastore.schema.verification", "false") \
+        .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
+        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
+        .config("spark.hadoop.fs.gs.auth.service.account.json.keyfile", "/mnt/secrets/key.json") \
+        .config("spark.hadoop.fs.gs.project.id", "osd-k8s") \
+        .config("spark.hadoop.fs.gs.system.bucket", "osd-data") \
+        .enableHiveSupport()
 
-# Add the directory to system path
-sys.path.insert(0, '/tmp')
-
-# Import spark session creation module
-from spark_config_hudi import create_spark_session
+    return builder.getOrCreate()
 
 def create_sample_iot_data(spark):
     """Create sample data matching iot_events schema"""
@@ -96,7 +107,8 @@ def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.database': schema_name,
         'hoodie.datasource.hive_sync.table': table_name,
-        'hoodie.datasource.hive_sync.use_jdbc': 'false'
+        'hoodie.datasource.hive_sync.use_jdbc': 'false',
+        'hoodie.datasource.hive_sync.support_timestamp': 'true'
     }
 
     if table_type == 'MERGE_ON_READ':
