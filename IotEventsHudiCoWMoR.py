@@ -187,11 +187,6 @@ def main():
         mor_df = spark.read.format("hudi").load(mor_table_path)
         mor_df.select("uuid", "ts", "consumption", "date", "processing_time").show(truncate=False)
 
-        # Read MoR table (real-time view)
-        print("Reading MoR table (iot_events_mor, real-time):")
-        mor_rt_df = spark.read.option("as.of.instant", "LATEST").format("hudi").load(mor_table_path)
-        mor_rt_df.select("uuid", "ts", "consumption", "date", "processing_time").show(truncate=False)
-
         # Show table statistics
         for table_path, table_type in [(cow_table_path, "CoW"), (mor_table_path, "MoR")]:
             df = spark.read.format("hudi").load(table_path)
