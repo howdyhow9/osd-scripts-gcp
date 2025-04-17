@@ -5,6 +5,10 @@ import os
 
 def create_spark_session():
     """Initialize Spark session with Hudi, Hive, Calcite, and GCS configurations"""
+    from pyspark.context import SparkContext
+    sc = SparkContext.getOrCreate()
+    sc.setLogLevel("WARN")  # Reduce logging to WARN level
+    
     builder = SparkSession.builder \
         .config("spark.jars.packages", (
         'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1,'
