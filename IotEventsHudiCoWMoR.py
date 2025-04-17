@@ -113,8 +113,10 @@ def write_hudi_table(spark, df, table_name, table_path, table_type, schema_name=
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.database': schema_name,
         'hoodie.datasource.hive_sync.table': table_name,
-        'hoodie.datasource.hive_sync.use_jdbc': 'false',
-        'hoodie.datasource.hive_sync.support_timestamp': 'true'
+        'hoodie.datasource.hive_sync.jdbcurl': "jdbc:postgresql://postgres:5432/hive_metastore",
+        'hoodie.datasource.hive_sync.username': "hive",
+        'hoodie.datasource.hive_sync.password': "GUYgsjsj@123",
+        'hoodie.datasource.hive_sync.mode': 'hms',
     }
 
     if table_type == 'MERGE_ON_READ':
