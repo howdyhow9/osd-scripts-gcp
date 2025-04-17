@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp
+from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp, count, countDistinct
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
 import os
 
