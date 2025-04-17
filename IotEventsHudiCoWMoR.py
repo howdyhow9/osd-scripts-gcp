@@ -21,14 +21,10 @@ from spark_config_hudi import create_spark_session
 # Initialize Spark session
 spark = create_spark_session()
 
-# Set these configs to help with Parquet dictionary encoding issues
-spark.conf.set("spark.sql.parquet.enableDictionaryEncoding", "false")
-spark.conf.set("spark.sql.parquet.filterPushdown", "false")
-
-# Define schema matching iot_events - with proper types
+# Define schema matching iot_events - using StringType for timestamp fields to match existing schema
 schema = StructType([
     StructField("uuid", StringType(), False),
-    StructField("ts", TimestampType(), True),  # Changed to TimestampType for consistency
+    StructField("ts", StringType(), True),  # Keep as StringType, not TimestampType
     StructField("consumption", DoubleType(), True),
     StructField("month", IntegerType(), True),
     StructField("day", IntegerType(), True),
@@ -37,23 +33,19 @@ schema = StructType([
     StructField("date", StringType(), True),
     StructField("key", StringType(), True),
     StructField("kafka_key", StringType(), True),
-    StructField("kafka_timestamp", TimestampType(), True),  # Changed to TimestampType
-    StructField("processing_time", TimestampType(), True),  # Changed to TimestampType
+    StructField("kafka_timestamp", StringType(), True),  # Keep as StringType
+    StructField("processing_time", StringType(), True),  # Keep as StringType
     StructField("batch_id", LongType(), True)
 ])
 
-# Sample data with proper timestamp conversion
+# Sample data - no need to convert timestamp strings
 data = [
     ("IoT_01", "2025-04-17 04:00:00", 50.25, 4, 17, 4, 0, "2025/04/17", "IoT_01_2025-04-17_04:00:00", "IoT_01_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2),
     ("IoT_02", "2025-04-17 04:00:00", 60.75, 4, 17, 4, 0, "2025/04/17", "IoT_02_2025-04-17_04:00:00", "IoT_02_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2)
 ]
 
-# Create initial dataframe
-raw_df = spark.createDataFrame(data, schema.fieldNames())
-# Convert string timestamps to proper timestamp types
-df = raw_df.withColumn("ts", to_timestamp(col("ts"))) \
-    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
-    .withColumn("processing_time", to_timestamp(col("processing_time")))
+# Create dataframe - keep timestamp fields as strings
+df = spark.createDataFrame(data, schema)
 
 # Hudi configurations for iot_events (COW)
 base_path_cow = "gs://osd-data/kafka_hudi.db/iot_events"
@@ -71,9 +63,10 @@ hudi_options_cow = {
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
     "hoodie.datasource.hive_sync.mode": "hms",
-    # Added for schema compatibility
+    # Schema evolution options
     "hoodie.datasource.write.reconcile.schema": "true",
-    "hoodie.datasource.write.drop.partition.columns": "false"
+    "hoodie.schema.on.read.enable": "true",
+    "hoodie.avro.schema.validate": "false"  # Turn off strict validation
 }
 
 # Hudi configurations for new MOR table
@@ -92,23 +85,29 @@ hudi_options_mor = {
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
     "hoodie.datasource.hive_sync.mode": "hms",
-    # Added for schema compatibility
+    # Schema evolution options
     "hoodie.datasource.write.reconcile.schema": "true",
-    "hoodie.datasource.write.drop.partition.columns": "false"
+    "hoodie.schema.on.read.enable": "true",
+    "hoodie.avro.schema.validate": "false"  # Turn off strict validation
 }
 
-# Safe function to write to Hudi
+# Function to write to Hudi
 def write_hudi(df, base_path, hudi_options, table_type, operation="upsert", mode="append"):
     options = hudi_options.copy()
     options["hoodie.datasource.write.table.type"] = table_type
     options["hoodie.datasource.write.operation"] = operation
 
-    df.write.format("hudi") \
-        .options(**options) \
-        .mode(mode) \
-        .save(base_path)
+    try:
+        df.write.format("hudi") \
+            .options(**options) \
+            .mode(mode) \
+            .save(base_path)
+        print(f"Successfully wrote data with operation '{operation}' to {base_path}")
+    except Exception as e:
+        print(f"Error writing data: {str(e)}")
+        raise
 
-# Safe function to read from Hudi
+# Function to read from Hudi
 def read_hudi(base_path, query_type="snapshot", begin_time=None):
     try:
         reader = spark.read.format("hudi")
@@ -118,15 +117,13 @@ def read_hudi(base_path, query_type="snapshot", begin_time=None):
         elif query_type == "read_optimized":
             reader = reader.option("hoodie.datasource.query.type", "read_optimized")
 
-        # Create temporary view to handle potential errors
         df = reader.load(base_path)
         return df
     except Exception as e:
         print(f"Read error: {str(e)}")
-        # Return empty dataframe with same schema on error
         return spark.createDataFrame([], schema)
 
-# Safe show function to prevent errors
+# Function to safely display dataframes
 def safe_show(df, cols=None, n=20):
     try:
         if cols:
@@ -137,7 +134,6 @@ def safe_show(df, cols=None, n=20):
         print(f"Display error: {str(e)}")
         print("Trying alternative display method...")
         try:
-            # Try writing to memory first
             df.createOrReplaceTempView("temp_view")
             if cols:
                 cols_str = ", ".join(cols)
@@ -147,26 +143,29 @@ def safe_show(df, cols=None, n=20):
         except Exception as e2:
             print(f"Alternative display also failed: {str(e2)}")
 
-# Update data with proper timestamp conversion
+# Update data - keeping timestamps as strings
 update_data = [
     ("IoT_01", "2025-04-17 04:00:00", 55.50, 4, 17, 4, 0, "2025/04/17", "IoT_01_2025-04-17_04:00:00_updated", "IoT_01_2025-04-17_04:00:00_updated", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2),
     ("IoT_03", "2025-04-17 04:00:00", 70.00, 4, 17, 4, 0, "2025/04/17", "IoT_03_2025-04-17_04:00:00", "IoT_03_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2)
 ]
-raw_update_df = spark.createDataFrame(update_data, schema.fieldNames())
-update_df = raw_update_df.withColumn("ts", to_timestamp(col("ts"))) \
-    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
-    .withColumn("processing_time", to_timestamp(col("processing_time")))
+update_df = spark.createDataFrame(update_data, schema)
 
-# Delete data with proper timestamp conversion
+# Delete data - keeping timestamps as strings
 delete_data = [
     ("IoT_02", "2025-04-17 04:00:00", 60.75, 4, 17, 4, 0, "2025/04/17", "IoT_02_2025-04-17_04:00:00", "IoT_02_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2)
 ]
-raw_delete_df = spark.createDataFrame(delete_data, schema.fieldNames())
-delete_df = raw_delete_df.withColumn("ts", to_timestamp(col("ts"))) \
-    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
-    .withColumn("processing_time", to_timestamp(col("processing_time")))
+delete_df = spark.createDataFrame(delete_data, schema)
 
 try:
+    # First, let's check if the existing table has data
+    print("Checking existing table schema...")
+    try:
+        existing_df = spark.read.format("hudi").load(base_path_cow)
+        print("Existing table schema:")
+        existing_df.printSchema()
+    except Exception as e:
+        print(f"Could not read existing table: {str(e)}")
+
     # --- Test COW (iot_events) ---
     print("Testing COW on iot_events")
 
@@ -204,19 +203,17 @@ try:
     # --- Test MOR (iot_events_mor) ---
     print("Testing MOR on iot_events_mor")
 
-    # Test 5: Insert (MOR)
+    # For MOR table, we'll use overwrite mode for the first write
     write_hudi(df, base_path_mor, hudi_options_mor, "MERGE_ON_READ", operation="insert", mode="overwrite")
     print("MOR Insert:")
     result_df = read_hudi(base_path_mor)
     safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
-    # Test 6: Upsert (MOR)
     write_hudi(update_df, base_path_mor, hudi_options_mor, "MERGE_ON_READ")
     print("MOR Upsert:")
     result_df = read_hudi(base_path_mor)
     safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
-    # Test 7: Delete (MOR)
     write_hudi(delete_df, base_path_mor, hudi_options_mor, "MERGE_ON_READ", operation="delete")
     print("MOR Delete:")
     result_df = read_hudi(base_path_mor)
