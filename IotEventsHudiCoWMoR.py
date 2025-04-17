@@ -49,28 +49,36 @@ df = spark.createDataFrame(data, schema)
 base_path_cow = "gs://osd-data/kafka_hudi.db/iot_events"
 table_name_cow = "kafka_hudi_iot_events"  # Changed to match existing table name
 hudi_options_cow = {
-    "hoodie.table.name": table_name_cow,
+    "hoodie.table.name": "kafka_hudi_iot_events",
     "hoodie.datasource.write.recordkey.field": "uuid",
     "hoodie.datasource.write.partitionpath.field": "",  # No partitioning
     "hoodie.datasource.write.precombine.field": "ts",
     "hoodie.datasource.hive_sync.enable": "true",
     "hoodie.datasource.hive_sync.database": "kafka_hudi",
-    "hoodie.datasource.hive_sync.table": table_name_cow,
-    "hoodie.datasource.hive_sync.partition_fields": ""
+    "hoodie.datasource.hive_sync.table": "kafka_hudi_iot_events",
+    "hoodie.datasource.hive_sync.partition_fields": "",
+    "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
+    "hoodie.datasource.hive_sync.username": "hive",
+    "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
+    "hoodie.datasource.hive_sync.mode": "jdbc"
 }
 
 # Hudi configurations for new MOR table
 base_path_mor = "gs://osd-data/kafka_hudi.db/iot_events_mor"
 table_name_mor = "kafka_hudi_iot_events_mor"  # Consistent naming with the COW table
 hudi_options_mor = {
-    "hoodie.table.name": table_name_mor,
+    "hoodie.table.name": "kafka_hudi_iot_events_mor",
     "hoodie.datasource.write.recordkey.field": "uuid",
     "hoodie.datasource.write.partitionpath.field": "",
     "hoodie.datasource.write.precombine.field": "ts",
     "hoodie.datasource.hive_sync.enable": "true",
     "hoodie.datasource.hive_sync.database": "kafka_hudi",
-    "hoodie.datasource.hive_sync.table": table_name_mor,
-    "hoodie.datasource.hive_sync.partition_fields": ""
+    "hoodie.datasource.hive_sync.table": "kafka_hudi_iot_events_mor",
+    "hoodie.datasource.hive_sync.partition_fields": "",
+    "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
+    "hoodie.datasource.hive_sync.username": "hive",
+    "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
+    "hoodie.datasource.hive_sync.mode": "jdbc"
 }
 
 # Function to write to Hudi
