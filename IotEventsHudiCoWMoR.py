@@ -60,7 +60,7 @@ hudi_options_cow = {
     "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
-    "hoodie.datasource.hive_sync.mode": "jdbc"
+    "hoodie.datasource.hive_sync.mode": "hms"
 }
 
 # Hudi configurations for new MOR table
@@ -78,7 +78,7 @@ hudi_options_mor = {
     "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
-    "hoodie.datasource.hive_sync.mode": "jdbc"
+    "hoodie.datasource.hive_sync.mode": "hms"
 }
 
 # Function to write to Hudi
