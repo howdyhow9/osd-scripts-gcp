@@ -4,9 +4,15 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 import os
 
 def create_spark_session():
-    """Initialize Spark session with Hudi, Hive, and GCS configurations"""
+    """Initialize Spark session with Hudi, Hive, Calcite, and GCS configurations"""
     builder = SparkSession.builder \
-        .config("spark.jars.packages", 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1') \
+        .config("spark.jars.packages", (
+        'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1,'
+        'org.apache.calcite:calcite-core:1.26.0,'
+        'org.apache.hive:hive-exec:3.1.3,'
+        'org.apache.hive:hive-metastore:3.1.3,'
+        'org.postgresql:postgresql:42.7.3'
+    )) \
         .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
@@ -92,8 +98,8 @@ def update_iot_data(spark):
         .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"), "yyyy-MM-dd HH:mm:ss")) \
         .withColumn("processing_time", to_timestamp(col("processing_time"), "yyyy-MM-dd HH:mm:ss"))
 
-def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_hudi"):
-    """Write DataFrame to Hudi table (CoW or MoR)"""
+def write_hudi_table(spark, df, table_name, table_path, table_type, schema_name="kafka_hudi"):
+    """Write DataFrame to Hudi table (CoW or MoR) and explicitly register in Hive"""
     hudi_options = {
         'hoodie.table.name': table_name,
         'hoodie.datasource.write.recordkey.field': 'uuid',
@@ -116,6 +122,7 @@ def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_
         hudi_options['hoodie.compaction.strategy'] = 'org.apache.hudi.table.action.compact.strategy.LogFileSizeBasedCompactionStrategy'
         hudi_options['hoodie.compaction.logfile.size.threshold'] = '134217728'  # 128MB
 
+    # Write to Hudi table
     df.write \
         .format("hudi") \
         .options(**hudi_options) \
@@ -123,6 +130,14 @@ def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_
         .save(table_path)
 
     print(f"Successfully wrote to {table_type} table: {table_name} at {table_path}")
+
+    # Explicitly create table in Hive metastore
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {schema_name}.{table_name}
+        USING hudi
+        LOCATION '{table_path}'
+    """)
+    print(f"Table {schema_name}.{table_name} registered")
 
 def main():
     try:
@@ -146,10 +161,10 @@ def main():
         print(f"Schema {schema_name} created or already exists")
 
         # Write to CoW table
-        write_hudi_table(df, cow_table_name, cow_table_path, "COPY_ON_WRITE", schema_name)
+        write_hudi_table(spark, df, cow_table_name, cow_table_path, "COPY_ON_WRITE", schema_name)
 
         # Write to MoR table
-        write_hudi_table(df, mor_table_name, mor_table_path, "MERGE_ON_READ", schema_name)
+        write_hudi_table(spark, df, mor_table_name, mor_table_path, "MERGE_ON_READ", schema_name)
 
         # Perform updates
         update_df = update_iot_data(spark)
@@ -157,8 +172,8 @@ def main():
         update_df.show(truncate=False)
 
         # Apply updates to both tables
-        write_hudi_table(update_df, cow_table_name, cow_table_path, "COPY_ON_WRITE", schema_name)
-        write_hudi_table(update_df, mor_table_name, mor_table_path, "MERGE_ON_READ", schema_name)
+        write_hudi_table(spark, update_df, cow_table_name, cow_table_path, "COPY_ON_WRITE", schema_name)
+        write_hudi_table(spark, update_df, mor_table_name, mor_table_path, "MERGE_ON_READ", schema_name)
 
         # Read and verify CoW table
         print("Reading CoW table (iot_events_cow):")
