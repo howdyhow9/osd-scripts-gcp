@@ -23,18 +23,18 @@ spark = create_spark_session()
 
 # Define schema matching iot_events - using StringType for timestamp fields to match existing schema
 schema = StructType([
-    StructField("uuid", StringType(), False),
-    StructField("ts", StringType(), True),  # Keep as StringType, not TimestampType
-    StructField("consumption", DoubleType(), True),
-    StructField("month", IntegerType(), True),
-    StructField("day", IntegerType(), True),
-    StructField("hour", IntegerType(), True),
-    StructField("minute", IntegerType(), True),
+    StructField("uuid", StringType(), True),  # Nullable to match table
+    StructField("ts", StringType(), True),
+    StructField("consumption", StringType(), True),  # Changed to StringType
+    StructField("month", StringType(), True),  # Changed to StringType
+    StructField("day", StringType(), True),    # Changed to StringType
+    StructField("hour", StringType(), True),   # Changed to StringType
+    StructField("minute", StringType(), True), # Changed to StringType
     StructField("date", StringType(), True),
     StructField("key", StringType(), True),
     StructField("kafka_key", StringType(), True),
-    StructField("kafka_timestamp", StringType(), True),  # Keep as StringType
-    StructField("processing_time", StringType(), True),  # Keep as StringType
+    StructField("kafka_timestamp", StringType(), True),
+    StructField("processing_time", StringType(), True),
     StructField("batch_id", LongType(), True)
 ])
 
