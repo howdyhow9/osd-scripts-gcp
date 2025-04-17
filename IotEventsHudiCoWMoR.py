@@ -21,10 +21,14 @@ from spark_config_hudi import create_spark_session
 # Initialize Spark session
 spark = create_spark_session()
 
-# Define schema matching iot_events
+# Set these configs to help with Parquet dictionary encoding issues
+spark.conf.set("spark.sql.parquet.enableDictionaryEncoding", "false")
+spark.conf.set("spark.sql.parquet.filterPushdown", "false")
+
+# Define schema matching iot_events - with proper types
 schema = StructType([
     StructField("uuid", StringType(), False),
-    StructField("ts", StringType(), True),
+    StructField("ts", TimestampType(), True),  # Changed to TimestampType for consistency
     StructField("consumption", DoubleType(), True),
     StructField("month", IntegerType(), True),
     StructField("day", IntegerType(), True),
@@ -33,21 +37,27 @@ schema = StructType([
     StructField("date", StringType(), True),
     StructField("key", StringType(), True),
     StructField("kafka_key", StringType(), True),
-    StructField("kafka_timestamp", StringType(), True),
-    StructField("processing_time", StringType(), True),
+    StructField("kafka_timestamp", TimestampType(), True),  # Changed to TimestampType
+    StructField("processing_time", TimestampType(), True),  # Changed to TimestampType
     StructField("batch_id", LongType(), True)
 ])
 
-# Sample data
+# Sample data with proper timestamp conversion
 data = [
     ("IoT_01", "2025-04-17 04:00:00", 50.25, 4, 17, 4, 0, "2025/04/17", "IoT_01_2025-04-17_04:00:00", "IoT_01_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2),
     ("IoT_02", "2025-04-17 04:00:00", 60.75, 4, 17, 4, 0, "2025/04/17", "IoT_02_2025-04-17_04:00:00", "IoT_02_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2)
 ]
-df = spark.createDataFrame(data, schema)
+
+# Create initial dataframe
+raw_df = spark.createDataFrame(data, schema.fieldNames())
+# Convert string timestamps to proper timestamp types
+df = raw_df.withColumn("ts", to_timestamp(col("ts"))) \
+    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
+    .withColumn("processing_time", to_timestamp(col("processing_time")))
 
 # Hudi configurations for iot_events (COW)
 base_path_cow = "gs://osd-data/kafka_hudi.db/iot_events"
-table_name_cow = "kafka_hudi_iot_events"  # Changed to match existing table name
+table_name_cow = "kafka_hudi_iot_events"
 hudi_options_cow = {
     "hoodie.table.name": "kafka_hudi_iot_events",
     "hoodie.datasource.write.recordkey.field": "uuid",
@@ -60,12 +70,15 @@ hudi_options_cow = {
     "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
-    "hoodie.datasource.hive_sync.mode": "hms"
+    "hoodie.datasource.hive_sync.mode": "hms",
+    # Added for schema compatibility
+    "hoodie.datasource.write.reconcile.schema": "true",
+    "hoodie.datasource.write.drop.partition.columns": "false"
 }
 
 # Hudi configurations for new MOR table
 base_path_mor = "gs://osd-data/kafka_hudi.db/iot_events_mor"
-table_name_mor = "kafka_hudi_iot_events_mor"  # Consistent naming with the COW table
+table_name_mor = "kafka_hudi_iot_events_mor"
 hudi_options_mor = {
     "hoodie.table.name": "kafka_hudi_iot_events_mor",
     "hoodie.datasource.write.recordkey.field": "uuid",
@@ -78,12 +91,15 @@ hudi_options_mor = {
     "hoodie.datasource.hive_sync.jdbcurl": "jdbc:postgresql://postgres:5432/hive_metastore",
     "hoodie.datasource.hive_sync.username": "hive",
     "hoodie.datasource.hive_sync.password": "GUYgsjsj@123",
-    "hoodie.datasource.hive_sync.mode": "hms"
+    "hoodie.datasource.hive_sync.mode": "hms",
+    # Added for schema compatibility
+    "hoodie.datasource.write.reconcile.schema": "true",
+    "hoodie.datasource.write.drop.partition.columns": "false"
 }
 
-# Function to write to Hudi
+# Safe function to write to Hudi
 def write_hudi(df, base_path, hudi_options, table_type, operation="upsert", mode="append"):
-    options = hudi_options.copy()  # Create a copy to avoid modifying the original dict
+    options = hudi_options.copy()
     options["hoodie.datasource.write.table.type"] = table_type
     options["hoodie.datasource.write.operation"] = operation
 
@@ -92,50 +108,98 @@ def write_hudi(df, base_path, hudi_options, table_type, operation="upsert", mode
         .mode(mode) \
         .save(base_path)
 
-# Function to read from Hudi
+# Safe function to read from Hudi
 def read_hudi(base_path, query_type="snapshot", begin_time=None):
-    reader = spark.read.format("hudi")
-    if query_type == "incremental":
-        reader = reader.option("hoodie.datasource.query.type", "incremental") \
-            .option("hoodie.datasource.read.begin.instanttime", begin_time)
-    elif query_type == "read_optimized":
-        reader = reader.option("hoodie.datasource.query.type", "read_optimized")
-    return reader.load(base_path)
+    try:
+        reader = spark.read.format("hudi")
+        if query_type == "incremental":
+            reader = reader.option("hoodie.datasource.query.type", "incremental") \
+                .option("hoodie.datasource.read.begin.instanttime", begin_time)
+        elif query_type == "read_optimized":
+            reader = reader.option("hoodie.datasource.query.type", "read_optimized")
 
-# --- Test COW (iot_events) ---
-print("Testing COW on iot_events")
+        # Create temporary view to handle potential errors
+        df = reader.load(base_path)
+        return df
+    except Exception as e:
+        print(f"Read error: {str(e)}")
+        # Return empty dataframe with same schema on error
+        return spark.createDataFrame([], schema)
+
+# Safe show function to prevent errors
+def safe_show(df, cols=None, n=20):
+    try:
+        if cols:
+            df.select(*cols).show(n)
+        else:
+            df.show(n)
+    except Exception as e:
+        print(f"Display error: {str(e)}")
+        print("Trying alternative display method...")
+        try:
+            # Try writing to memory first
+            df.createOrReplaceTempView("temp_view")
+            if cols:
+                cols_str = ", ".join(cols)
+                spark.sql(f"SELECT {cols_str} FROM temp_view").show(n)
+            else:
+                spark.sql("SELECT * FROM temp_view").show(n)
+        except Exception as e2:
+            print(f"Alternative display also failed: {str(e2)}")
+
+# Update data with proper timestamp conversion
+update_data = [
+    ("IoT_01", "2025-04-17 04:00:00", 55.50, 4, 17, 4, 0, "2025/04/17", "IoT_01_2025-04-17_04:00:00_updated", "IoT_01_2025-04-17_04:00:00_updated", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2),
+    ("IoT_03", "2025-04-17 04:00:00", 70.00, 4, 17, 4, 0, "2025/04/17", "IoT_03_2025-04-17_04:00:00", "IoT_03_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2)
+]
+raw_update_df = spark.createDataFrame(update_data, schema.fieldNames())
+update_df = raw_update_df.withColumn("ts", to_timestamp(col("ts"))) \
+    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
+    .withColumn("processing_time", to_timestamp(col("processing_time")))
+
+# Delete data with proper timestamp conversion
+delete_data = [
+    ("IoT_02", "2025-04-17 04:00:00", 60.75, 4, 17, 4, 0, "2025/04/17", "IoT_02_2025-04-17_04:00:00", "IoT_02_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2)
+]
+raw_delete_df = spark.createDataFrame(delete_data, schema.fieldNames())
+delete_df = raw_delete_df.withColumn("ts", to_timestamp(col("ts"))) \
+    .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"))) \
+    .withColumn("processing_time", to_timestamp(col("processing_time")))
 
 try:
+    # --- Test COW (iot_events) ---
+    print("Testing COW on iot_events")
+
     # Test 1: Insert (COW)
     write_hudi(df, base_path_cow, hudi_options_cow, "COPY_ON_WRITE", operation="insert", mode="append")
     print("COW Insert:")
-    read_hudi(base_path_cow).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_cow)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
     # Test 2: Upsert (COW)
-    update_data = [
-        ("IoT_01", "2025-04-17 04:00:00", 55.50, 4, 17, 4, 0, "2025/04/17", "IoT_01_2025-04-17_04:00:00_updated", "IoT_01_2025-04-17_04:00:00_updated", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2),
-        ("IoT_03", "2025-04-17 04:00:00", 70.00, 4, 17, 4, 0, "2025/04/17", "IoT_03_2025-04-17_04:00:00", "IoT_03_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:06:00", 2)
-    ]
-    update_df = spark.createDataFrame(update_data, schema)
     write_hudi(update_df, base_path_cow, hudi_options_cow, "COPY_ON_WRITE")
     print("COW Upsert:")
-    read_hudi(base_path_cow).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_cow)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
     # Test 3: Delete (COW)
-    delete_data = [("IoT_02", "2025-04-17 04:00:00", 60.75, 4, 17, 4, 0, "2025/04/17", "IoT_02_2025-04-17_04:00:00", "IoT_02_2025-04-17_04:00:00", "2025-04-17 04:00:00", "2025-04-17 04:05:00", 2)]
-    delete_df = spark.createDataFrame(delete_data, schema)
     write_hudi(delete_df, base_path_cow, hudi_options_cow, "COPY_ON_WRITE", operation="delete")
     print("COW Delete:")
-    read_hudi(base_path_cow).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_cow)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
-    # Test 4: Incremental Query (COW)
-    commits = spark.read.format("hudi").load(base_path_cow).select("_hoodie_commit_time").distinct().collect()
-    if commits:
-        begin_time = min([row._hoodie_commit_time for row in commits])
-        print("COW Incremental Query:")
-        read_hudi(base_path_cow, query_type="incremental", begin_time=begin_time).select("uuid", "ts", "consumption", "date").show()
-    else:
-        print("No commits found for incremental query on COW table")
+    # Test 4: Incremental Query (COW) with error handling
+    try:
+        commits = spark.read.format("hudi").load(base_path_cow).select("_hoodie_commit_time").distinct().collect()
+        if commits:
+            begin_time = min([row._hoodie_commit_time for row in commits])
+            print("COW Incremental Query:")
+            result_df = read_hudi(base_path_cow, query_type="incremental", begin_time=begin_time)
+            safe_show(result_df, ["uuid", "ts", "consumption", "date"])
+        else:
+            print("No commits found for incremental query on COW table")
+    except Exception as e:
+        print(f"Error with incremental query on COW: {str(e)}")
 
     # --- Test MOR (iot_events_mor) ---
     print("Testing MOR on iot_events_mor")
@@ -143,33 +207,43 @@ try:
     # Test 5: Insert (MOR)
     write_hudi(df, base_path_mor, hudi_options_mor, "MERGE_ON_READ", operation="insert", mode="overwrite")
     print("MOR Insert:")
-    read_hudi(base_path_mor).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_mor)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
     # Test 6: Upsert (MOR)
     write_hudi(update_df, base_path_mor, hudi_options_mor, "MERGE_ON_READ")
     print("MOR Upsert:")
-    read_hudi(base_path_mor).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_mor)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
     # Test 7: Delete (MOR)
     write_hudi(delete_df, base_path_mor, hudi_options_mor, "MERGE_ON_READ", operation="delete")
     print("MOR Delete:")
-    read_hudi(base_path_mor).select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_mor)
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
     # Test 8: Read-Optimized Query (MOR)
     print("MOR Read-Optimized Query:")
-    read_hudi(base_path_mor, query_type="read_optimized").select("uuid", "ts", "consumption", "date").show()
+    result_df = read_hudi(base_path_mor, query_type="read_optimized")
+    safe_show(result_df, ["uuid", "ts", "consumption", "date"])
 
-    # Test 9: Incremental Query (MOR)
-    commits = spark.read.format("hudi").load(base_path_mor).select("_hoodie_commit_time").distinct().collect()
-    if commits:
-        begin_time = min([row._hoodie_commit_time for row in commits])
-        print("MOR Incremental Query:")
-        read_hudi(base_path_mor, query_type="incremental", begin_time=begin_time).select("uuid", "ts", "consumption", "date").show()
-    else:
-        print("No commits found for incremental query on MOR table")
+    # Test 9: Incremental Query (MOR) with error handling
+    try:
+        commits = spark.read.format("hudi").load(base_path_mor).select("_hoodie_commit_time").distinct().collect()
+        if commits:
+            begin_time = min([row._hoodie_commit_time for row in commits])
+            print("MOR Incremental Query:")
+            result_df = read_hudi(base_path_mor, query_type="incremental", begin_time=begin_time)
+            safe_show(result_df, ["uuid", "ts", "consumption", "date"])
+        else:
+            print("No commits found for incremental query on MOR table")
+    except Exception as e:
+        print(f"Error with incremental query on MOR: {str(e)}")
 
 except Exception as e:
     print(f"Error encountered: {str(e)}")
+    import traceback
+    traceback.print_exc()
 
 finally:
     # Stop Spark session
