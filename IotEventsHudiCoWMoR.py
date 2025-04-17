@@ -1,19 +1,22 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+from pyspark.sql.functions import *
+from pyspark.sql import functions as F
+from pyspark.sql.types import *
 import os
+from google.cloud import storage
+import sys
 
-def create_spark_session():
-    """Initialize Spark session with Hudi configurations"""
-    spark = SparkSession.builder \
-        .appName("HudiCoWMoRIotEventsDemo") \
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
-        .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
-        .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
-        .config("spark.hadoop.google.cloud.auth.service.account.enable", "true") \
-        .getOrCreate()
-    return spark
+# Set up GCS client and download the file
+client = storage.Client()
+bucket = client.get_bucket("osd-scripts")
+blob = bucket.blob("spark_config_hudi.py")
+blob.download_to_filename("/tmp/spark_config_hudi.py")
+
+# Add the directory to system path
+sys.path.insert(0, '/tmp')
+
+# Import spark session creation module
+from spark_config_hudi import create_spark_session
 
 def create_sample_iot_data(spark):
     """Create sample data matching iot_events schema"""
