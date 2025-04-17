@@ -2,13 +2,12 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp, count, countDistinct, max, min
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
 import os
+import logging
+
 
 def create_spark_session():
     """Initialize Spark session with Hudi, Hive, Calcite, and GCS configurations"""
-    from pyspark.context import SparkContext
-    sc = SparkContext.getOrCreate()
-    sc.setLogLevel("WARN")  # Reduce logging to WARN level
-    
+
     builder = SparkSession.builder \
         .config("spark.jars.packages", (
         'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.1,'
@@ -149,6 +148,7 @@ def main():
     try:
         # Initialize Spark session
         spark = create_spark_session()
+        spark.sparkContext.setLogLevel("WARN")
 
         # Create sample iot_events data
         df = create_sample_iot_data(spark)
