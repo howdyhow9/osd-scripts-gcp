@@ -1,29 +1,26 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import *
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
+from pyspark.sql.functions import lit, col, current_timestamp, to_timestamp
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
 import os
-from google.cloud import storage
-import sys
 
-# Set up GCS client and download the file
-client = storage.Client()
-bucket = client.get_bucket("osd-scripts")
-blob = bucket.blob("spark_config_hudi.py")
-blob.download_to_filename("/tmp/spark_config_hudi.py")
-
-# Add the directory to system path
-sys.path.insert(0, '/tmp')
-
-# Import spark session creation module
-from spark_config_hudi import create_spark_session
+def create_spark_session():
+    """Initialize Spark session with Hudi configurations"""
+    spark = SparkSession.builder \
+        .appName("HudiCoWMoRIotEventsDemo") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.hudi.catalog.HoodieCatalog") \
+        .config("spark.sql.extensions", "org.apache.spark.sql.hudi.HoodieSparkSessionExtension") \
+        .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
+        .config("spark.hadoop.google.cloud.auth.service.account.enable", "true") \
+        .getOrCreate()
+    return spark
 
 def create_sample_iot_data(spark):
     """Create sample data matching iot_events schema"""
     schema = StructType([
         StructField("uuid", StringType(), False),
-        StructField("ts", TimestampType(), False),
-        StructField("consumption", StringType(), False),  # As per memory: StringType in existing table
+        StructField("ts", StringType(), False),  # Temporarily StringType for input
+        StructField("consumption", StringType(), False),
         StructField("month", StringType(), False),
         StructField("day", StringType(), False),
         StructField("hour", StringType(), False),
@@ -31,8 +28,8 @@ def create_sample_iot_data(spark):
         StructField("date", StringType(), False),
         StructField("key", StringType(), False),
         StructField("kafka_key", StringType(), True),
-        StructField("kafka_timestamp", TimestampType(), True),
-        StructField("processing_time", TimestampType(), True),
+        StructField("kafka_timestamp", StringType(), True),  # Temporarily StringType for input
+        StructField("processing_time", StringType(), True),  # Temporarily StringType for input
         StructField("batch_id", StringType(), True)
     ])
 
@@ -42,7 +39,44 @@ def create_sample_iot_data(spark):
         ("device3", "2025-04-16 10:02:00", "150.7", "04", "16", "10", "02", "2025-04-16", "key3", "kafka_key3", "2025-04-16 10:03:00", "2025-04-16 10:04:00", "1")
     ]
 
-    return spark.createDataFrame(data, schema)
+    # Create DataFrame with string timestamps
+    df = spark.createDataFrame(data, schema)
+
+    # Convert string timestamps to TimestampType
+    return df.withColumn("ts", to_timestamp(col("ts"), "yyyy-MM-dd HH:mm:ss")) \
+        .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"), "yyyy-MM-dd HH:mm:ss")) \
+        .withColumn("processing_time", to_timestamp(col("processing_time"), "yyyy-MM-dd HH:mm:ss"))
+
+def update_iot_data(spark):
+    """Create sample update data for iot_events"""
+    schema = StructType([
+        StructField("uuid", StringType(), False),
+        StructField("ts", StringType(), False),  # Temporarily StringType for input
+        StructField("consumption", StringType(), False),
+        StructField("month", StringType(), False),
+        StructField("day", StringType(), False),
+        StructField("hour", StringType(), False),
+        StructField("minute", StringType(), False),
+        StructField("date", StringType(), False),
+        StructField("key", StringType(), False),
+        StructField("kafka_key", StringType(), True),
+        StructField("kafka_timestamp", StringType(), True),  # Temporarily StringType for input
+        StructField("processing_time", StringType(), True),  # Temporarily StringType for input
+        StructField("batch_id", StringType(), True)
+    ])
+
+    updates = [
+        ("device1", "2025-04-16 11:00:00", "110.8", "04", "16", "11", "00", "2025-04-16", "key1", "kafka_key1", "2025-04-16 11:01:00", "2025-04-16 11:02:00", "2"),
+        ("device4", "2025-04-16 11:01:00", "300.1", "04", "16", "11", "01", "2025-04-16", "key4", "kafka_key4", "2025-04-16 11:02:00", "2025-04-16 11:03:00", "2")
+    ]
+
+    # Create DataFrame with string timestamps
+    df = spark.createDataFrame(updates, schema)
+
+    # Convert string timestamps to TimestampType
+    return df.withColumn("ts", to_timestamp(col("ts"), "yyyy-MM-dd HH:mm:ss")) \
+        .withColumn("kafka_timestamp", to_timestamp(col("kafka_timestamp"), "yyyy-MM-dd HH:mm:ss")) \
+        .withColumn("processing_time", to_timestamp(col("processing_time"), "yyyy-MM-dd HH:mm:ss"))
 
 def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_hudi"):
     """Write DataFrame to Hudi table (CoW or MoR)"""
@@ -74,31 +108,6 @@ def write_hudi_table(df, table_name, table_path, table_type, schema_name="kafka_
         .save(table_path)
 
     print(f"Successfully wrote to {table_type} table: {table_name} at {table_path}")
-
-def update_iot_data(spark):
-    """Create sample update data for iot_events"""
-    schema = StructType([
-        StructField("uuid", StringType(), False),
-        StructField("ts", TimestampType(), False),
-        StructField("consumption", StringType(), False),
-        StructField("month", StringType(), False),
-        StructField("day", StringType(), False),
-        StructField("hour", StringType(), False),
-        StructField("minute", StringType(), False),
-        StructField("date", StringType(), False),
-        StructField("key", StringType(), False),
-        StructField("kafka_key", StringType(), True),
-        StructField("kafka_timestamp", TimestampType(), True),
-        StructField("processing_time", TimestampType(), True),
-        StructField("batch_id", StringType(), True)
-    ])
-
-    updates = [
-        ("device1", "2025-04-16 11:00:00", "110.8", "04", "16", "11", "00", "2025-04-16", "key1", "kafka_key1", "2025-04-16 11:01:00", "2025-04-16 11:02:00", "2"),  # Update
-        ("device4", "2025-04-16 11:01:00", "300.1", "04", "16", "11", "01", "2025-04-16", "key4", "kafka_key4", "2025-04-16 11:02:00", "2025-04-16 11:03:00", "2")   # New
-    ]
-
-    return spark.createDataFrame(updates, schema)
 
 def main():
     try:
